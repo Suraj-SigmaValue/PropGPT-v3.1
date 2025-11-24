@@ -46,6 +46,9 @@ def planner_identify_mapping_keys(llm, query: str, candidate_keys: List[str]) ->
     - Do not omit or merge components.
     - Ensure the final mapping covers 100% of the metrics mentioned by the user.
     - Never return any mapping key that contains additional qualifiers, dimensions, or sub-metrics unless those qualifiers appear in the user query.
+    - if user asked question about "Demand" refer unit sold mapping keys
+    - if user asked question related to "Supply" refer Total unit mapping keys
+    - if no specific Segment/Property type/BHK mention in user query refer Property type wise mapping keys
     - if user asked for sales value, refer to mapping keys related to total sales (INR)
     - if user ask regarding number of projects launched, phases launched, and total buildings or towers refer "Total Project Launched","Total Phases Launched " and "Total Buildings or Towers" Mapping.
     - if user asked question related to project, select mapping project related keys
@@ -110,6 +113,7 @@ def agent_pick_relevant_columns(llm, query: str, selected_keys: List[str], candi
     - Keep the set small but sufficient (usually 5–20).
     - Output ONLY a JSON array of column names from CANDIDATE_COLUMNS. No markdown, no commentary.
     - CRITICAL: You MUST select at least one column for EVERY mapping key in "Selected Mapping Keys". Do not ignore any mapping key.
+    -if user asked question about "Demand" refer unit sold mapping keys if no specific mention refer Property type wise unit sold mapping keys
     - If a mapping key seems to have multiple relevant columns, pick the most descriptive ones.
     """
     try:

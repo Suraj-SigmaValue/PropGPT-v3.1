@@ -68,19 +68,6 @@ OUTPUT FORMAT (STRICT - follow exactly):
 [Bullet points with key metrics and trends]
 
 ### {"Deep Insights" if len(items) == 1 else "Deep Insights"}
-{"" if len(items) == 1 else f"""
-For each location, include:
-
-#### [Location/Item Name]
-#### Flats:
-- Average Price (2020): ₹X per sq. ft. → (2024): ₹Y per sq. ft. (Growth: Z%)
-- [Key insight about trend]
-- [Another metric or observation]
-
-#### Offices:
-- Average Price (2020): ₹X per sq. ft. → (2024): ₹Y per sq. ft. (Growth: Z%)
-- [Key insight about trend]
-"""}
 
 CRITICAL DO's AND DON'Ts:
 ✓ DO: Use exact values from evidence (e.g., "Total sales (2020): ₹21887359110 → (2024): ₹28234431307")
