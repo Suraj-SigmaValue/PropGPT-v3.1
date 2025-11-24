@@ -434,11 +434,13 @@ def count_tokens(text, model="gpt-4o-mini"):
 
 
 @st.cache_resource(show_spinner=False)
-def get_llm():
+def get_llm(provider_name=None):
     from langchain_openai import ChatOpenAI  
 
-    provider = (os.getenv("USE_LLM") or "openai").strip().lower()
-#    provider = (os.getenv("USE_LLM") or "gemini").strip().lower()
+    # Prioritize passed provider, then env var, then default to openai
+    env_provider = (os.getenv("USE_LLM") or "openai").strip().lower()
+    provider = (provider_name or env_provider).strip().lower()
+    
     logger.info("Using LLM provider: %s", provider)
 
     if provider == "gemini":
@@ -460,6 +462,7 @@ def get_llm():
             convert_system_message_to_human=True,
         )
 
+    # Default to OpenAI
     api_key = (os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")).strip()
     if not api_key or not api_key.startswith("sk-"):
         raise RuntimeError("Missing/invalid OPENAI_API_KEY.")
@@ -1213,6 +1216,25 @@ with st.sidebar:
         label_visibility="collapsed"
     )
     
+    st.divider()
+    
+    # LLM Provider Selection
+    st.write("**LLM Provider**")
+    llm_provider_display = st.selectbox(
+        "Select LLM",
+        options=["OpenAI", "Google Gemini"],
+        index=0, # Default to OpenAI
+        help="Choose the AI model provider",
+        label_visibility="collapsed"
+    )
+    
+    # Map display name to internal key
+    llm_provider_map = {
+        "OpenAI": "openai",
+        "Google Gemini": "gemini"
+    }
+    selected_llm_provider = llm_provider_map[llm_provider_display]
+    
     # Initialize mappings based on comparison type
     set_mappings_for_type(comparison_type)
     
@@ -1364,9 +1386,9 @@ if generate_btn:
     logger.info("Query: '%s'", query)
 
     try:
-        llm = get_llm()
+        llm = get_llm(selected_llm_provider)
         # Extract model information for display
-        provider = (os.getenv("USE_LLM") or "gemini").strip().lower()
+        provider = selected_llm_provider
         if provider == "gemini":
             model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
             provider_display = "Google Gemini"
