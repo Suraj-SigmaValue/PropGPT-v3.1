@@ -1136,7 +1136,7 @@ st.markdown("""
 # Header Section
 st.markdown("""
 <div style='padding: 2rem 0; border-bottom: 1px solid #34394F; margin-bottom: 2rem;'>
-    <h1 style='margin: 0 0 0.5rem 0;'>Real Estate Analysis Platform</h1>
+    <h1 style='margin: 0 0 0.5rem 0;'>Real Estate Analysis Platformm</h1>
     <p style='margin: 0; color: #B0B5C2; font-size: 0.95rem;'>Advanced AI-powered comparative analysis of real estate metrics across multiple locations</p>
 </div>
 """, unsafe_allow_html=True)
