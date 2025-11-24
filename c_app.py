@@ -624,45 +624,18 @@ def hybrid_retrieve(query: str, mapping_keys: List[str], vector_store: FAISS, bm
     return retrieved
 
 
-def beautify_markdown(text: str) -> str:
+def clean_response(text: str) -> str:
     """
-    Simple markdown cleanup - prevents automatic numbered list creation
+    Clean and format LLM response while preserving markdown structure.
+    This function only does minimal cleanup to ensure proper display.
     """
     if not text:
         return ""
-
-    # Step 1: Prevent markdown from creating numbered lists with years
-    # Escape years at the start of lines to prevent auto-numbering
-    text = re.sub(r'^(\d{4}\.)', r'\\\1', text, flags=re.MULTILINE)
     
-    # Step 2: Basic markdown cleanup
-    text = re.sub(r'[◦•◆■●]\s+', '- ', text)
-    
-    # Step 3: Fix section headers
-    # text = re.sub(r'^\\([^]+?)\\\s:\s*$', r'#### \1:', text, flags=re.MULTILINE)
-    
-    # Step 4: Ensure proper spacing for bullets
-    text = re.sub(r'(?<!\n)(-\s)', r'\n\1', text)
-    
-    # Step 5: Fix concatenated headings (like "### Executive SummaryThe Pune")
-    text = re.sub(r'(### [A-Za-z ]+)([A-Z][a-z])', r'\1\n\n\2', text)
+    # Remove excessive blank lines (more than 2 consecutive)
+    text = re.sub(r'\n{3,}', '\n\n', text)
     
     return text.strip()
-
-def strip_tables(text: str) -> str:
-    if not text:
-        return ""
-    lines = text.split("\n")
-    out: List[str] = []
-    for ln in lines:
-        s = ln.lstrip()
-        # drop pipe-table rows and separator rows commonly seen in tables
-        if s.startswith('|'):
-            continue
-        if re.match(r"^\|?\s*:?[-]{3,}:?\s*(\|\s*:?[-]{3,}:?\s*)*$", s):
-            continue
-        out.append(ln)
-    return "\n".join(out)
 
 
 # Get items for comparison type
@@ -1583,14 +1556,14 @@ if generate_btn:
             for chunk in llm.stream(formatted_prompt):
                 chunk_text = chunk.content if hasattr(chunk, 'content') else str(chunk)
                 full_response += chunk_text
-                rendered = strip_tables(beautify_markdown(full_response))
+                rendered = clean_response(full_response)
                 response_container.markdown(rendered, unsafe_allow_html=True)
             output_tokens = count_tokens(full_response)
         else:
             response = llm.invoke(formatted_prompt)
             response_text = response.content if hasattr(response, 'content') else str(response)
             output_tokens = count_tokens(response_text)
-            rendered = strip_tables(beautify_markdown(response_text))
+            rendered = clean_response(response_text)
             st.markdown(rendered, unsafe_allow_html=True)
 
     # Metrics Section
