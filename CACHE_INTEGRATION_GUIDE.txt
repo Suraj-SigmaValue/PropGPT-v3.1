@@ -1,0 +1,130 @@
+# Response Cache Integration Guide for c_app.py
+# Apply these changes manually to avoid file corruption
+
+## CHANGE 1: Add Import (Line ~40)
+# Find this line:
+from prompts import build_location_prompt, build_city_prompt, build_project_prompt
+
+# Add this line right after it:
+from response_cache import SemanticResponseCache
+
+
+## CHANGE 2: Initialize Cache Function (After get_embeddings() function, around line ~130)
+# Add this new function:
+
+@st.cache_resource
+def get_response_cache(_embeddings):
+    """Initialize semantic response cache (cached as resource)."""
+    cache_dir = BASE_DIR / "response_cache"
+    return SemanticResponseCache(
+        cache_dir=cache_dir,
+        embeddings=_embeddings,
+        similarity_threshold=0.95,  # 95% similarity required for cache hit
+        ttl_seconds=86400  # 24 hours TTL
+    )
+
+
+## CHANGE 3: Use Cache in Main Query Handler (Around line ~1580, BEFORE the LLM call)
+# Find this section where LLM is called:
+    with st.spinner("Generating analysis..."):
+        if stream:
+            response_container = st.empty()
+            full_response = ""
+            for chunk in llm.stream(formatted_prompt):
+                ...
+
+# REPLACE with this:
+
+    # Initialize cache
+    embeddings = get_embeddings()
+    response_cache = get_response_cache(embeddings)
+    
+    # Check cache before calling LLM
+    cached_result = response_cache.get(
+        query=query.strip(),
+        items=selected_items,
+        mapping_keys=final_mapping_keys,
+        comparison_type=comparison_type,
+        provider=provider
+    )
+    
+    if cached_result:
+        # CACHE HIT - Use cached response
+        response_text, metadata = cached_result
+        st.success("⚡ **Cache Hit!** Retrieved instant response from semantic cache.")
+        rendered = clean_response(response_text)
+        st.markdown(rendered, unsafe_allow_html=True)
+        
+        # Show cache metadata in expander
+        with st.expander("📊 Cache Details"):
+            st.json({
+                "cache_hit": True,
+                "similarity_threshold": 0.95,
+                "cached_at": metadata.get("timestamp", "N/A")
+            })
+        
+        output_tokens = count_tokens(response_text)
+    else:
+        # CACHE MISS - Generate with LLM
+        with st.spinner("Generating analysis..."):
+            if stream:
+                response_container = st.empty()
+                full_response = ""
+                for chunk in llm.stream(formatted_prompt):
+                    chunk_text = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                    full_response += chunk_text
+                    rendered = clean_response(full_response)
+                    response_container.markdown(rendered, unsafe_allow_html=True)
+                output_tokens = count_tokens(full_response)
+                response_text = full_response
+            else:
+                response = llm.invoke(formatted_prompt)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                output_tokens = count_tokens(response_text)
+                rendered = clean_response(response_text)
+                st.markdown(rendered, unsafe_allow_html=True)
+        
+        # Cache the response for future use
+        response_cache.set(
+            query=query.strip(),
+            items=selected_items,
+            mapping_keys=final_mapping_keys,
+            comparison_type=comparison_type,
+            provider=provider,
+            response=response_text,
+            metadata={
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "model": model_name
+            }
+        )
+        st.info("💾 Response cached for future queries")
+
+
+## CHANGE 4: Add Cache Management UI in Sidebar (Around line ~760, in sidebar section)
+# Find the sidebar section and add this:
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🗄️ Response Cache")
+
+try:
+    embeddings = get_embeddings()
+    response_cache = get_response_cache(embeddings)
+    stats = response_cache.get_stats()
+    
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        st.metric("Cached", stats["active_entries"])
+    with col2:
+        st.metric("Expired", stats["expired_entries"])
+    
+    if st.sidebar.button("Clear Cache", key="clear_cache"):
+        response_cache.clear_all()
+        st.sidebar.success("✅ Cache cleared!")
+        st.rerun()
+    
+    if st.sidebar.button("Clear Expired", key="clear_expired"):
+        response_cache.clear_expired()
+        st.sidebar.success("✅ Expired entries cleared!")
+except Exception as e:
+    st.sidebar.error(f"Cache error: {e}")

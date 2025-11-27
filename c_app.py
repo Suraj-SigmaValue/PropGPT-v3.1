@@ -38,6 +38,7 @@ from config import (
 )
 from agents import planner_identify_mapping_keys, agent_pick_relevant_columns
 from prompts import build_location_prompt, build_city_prompt, build_project_prompt
+from response_cache import SemanticResponseCache
 
 # Suppress warnings
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -126,6 +127,19 @@ def get_embeddings():
         model_name="sentence-transformers/all-mpnet-base-v2",
         model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True}
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def get_response_cache(_embeddings):
+    """Initialize semantic response cache (cached as resource)."""
+    # Use absolute path for cache directory
+    cache_dir = Path(os.getcwd()) / "response_cache"
+    return SemanticResponseCache(
+        cache_dir=cache_dir,
+        embeddings=_embeddings,
+        similarity_threshold=0.95,
+        ttl_seconds=86400
     )
 
 def flatten_columns(columns_by_key: Dict[str, List[str]]) -> List[str]:
@@ -630,12 +644,25 @@ def hybrid_retrieve(query: str, mapping_keys: List[str], vector_store: FAISS, bm
 def clean_response(text: str) -> str:
     """
     Clean and format LLM response while preserving markdown structure.
-    This function only does minimal cleanup to ensure proper display.
+    Handles different markdown output styles from various LLMs (OpenAI, Gemini, etc.).
     """
     if not text:
         return ""
     
-    # Remove excessive blank lines (more than 2 consecutive)
+    # Remove markdown code block markers
+    text = re.sub(r'^```markdown\s*\n', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\n```\s*$', '', text)
+    
+    # Ensure newline before headers
+    text = re.sub(r'([^\n])(#{1,6}\s+)', r'\1\n\n\2', text)
+    
+    # Ensure newline after headers
+    text = re.sub(r'(#{1,6}\s+[^\n]+)([^\n])', r'\1\n\2', text)
+    
+    # Ensure newlines before bullet points
+    text = re.sub(r'([^\n])([-*]\s+)', r'\1\n\2', text)
+    
+    # Remove excessive blank lines
     text = re.sub(r'\n{3,}', '\n\n', text)
     
     return text.strip()
@@ -1191,22 +1218,58 @@ with st.sidebar:
     
     st.divider()
     
-    # LLM Provider Selection
-    st.write("**LLM Provider**")
-    llm_provider_display = st.selectbox(
-        "Select LLM",
+    # LLM Provider Selection - Mapping
+    st.write("**Mapping LLM Provider**")
+    mapping_llm_provider_display = st.selectbox(
+        "Select LLM for Mapping",
         options=["OpenAI", "Google Gemini"],
-        index=0, # Default to OpenAI
-        help="Choose the AI model provider",
-        label_visibility="collapsed"
+        index=0,
+        help="LLM used for column mapping and selection agents",
+        label_visibility="collapsed",
+        key="mapping_llm_selector"
     )
     
-    # Map display name to internal key
+    # LLM Provider Selection - Response
+    st.write("**Response LLM Provider**")
+    response_llm_provider_display = st.selectbox(
+        "Select LLM for Response",
+        options=["OpenAI", "Google Gemini"],
+        index=0,
+        help="LLM used for final analysis generation",
+        label_visibility="collapsed",
+        key="response_llm_selector"
+    )
+    
+    # Map display names to internal keys
     llm_provider_map = {
         "OpenAI": "openai",
         "Google Gemini": "gemini"
     }
-    selected_llm_provider = llm_provider_map[llm_provider_display]
+    selected_mapping_llm_provider = llm_provider_map[mapping_llm_provider_display]
+    selected_response_llm_provider = llm_provider_map[response_llm_provider_display]
+    st.markdown("---")
+    st.markdown("### 🗄️ Response Cache")
+    
+    try:
+        # Initialize cache for stats
+        embeddings = get_embeddings()
+        response_cache = get_response_cache(embeddings)
+        stats = response_cache.get_stats()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Cached", stats["active_entries"])
+        with col2:
+            st.metric("Expired", stats["expired_entries"])
+        
+        if st.button("Clear Cache", key="clear_cache_btn"):
+            response_cache.clear_all()
+            st.success("✅ Cache cleared!")
+            st.rerun()
+            
+    except Exception as e:
+        # Silently fail in sidebar if cache not ready
+        pass
     
     # Initialize mappings based on comparison type
     set_mappings_for_type(comparison_type)
@@ -1359,18 +1422,21 @@ if generate_btn:
     logger.info("Query: '%s'", query)
 
     try:
-        llm = get_llm(selected_llm_provider)
-        # Extract model information for display
-        provider = selected_llm_provider
-        if provider == "gemini":
-            model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
-            provider_display = "Google Gemini"
-        elif provider == "nvidia":
-            model_name = os.getenv("NVIDIA_MODEL", "gemma-3-27b-it")
-            provider_display = "NVIDIA"
-        else:  # openai
-            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            provider_display = "OpenAI"
+        mapping_llm = get_llm(selected_mapping_llm_provider)
+        if selected_mapping_llm_provider == "gemini":
+            mapping_model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
+            mapping_provider_display = "Google Gemini"
+        else:
+            mapping_model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            mapping_provider_display = "OpenAI"
+        
+        response_llm = get_llm(selected_response_llm_provider)
+        if selected_response_llm_provider == "gemini":
+            response_model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
+            response_provider_display = "Google Gemini"
+        else:
+            response_model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            response_provider_display = "OpenAI"
     except Exception as exc:
         logger.error("Failed to initialize LLM: %s", exc)
         st.error(f"LLM initialization failed: {exc}")
@@ -1442,7 +1508,7 @@ if generate_btn:
         candidate_keys = list(COLUMN_MAPPING.keys())
     candidate_keys = sorted(set(candidate_keys))
 
-    planner_keys = planner_identify_mapping_keys(llm, query, candidate_keys)
+    planner_keys = planner_identify_mapping_keys(mapping_llm, query, candidate_keys)
     if not planner_keys:
         planner_keys = candidate_keys
     logger.info("Planner selected mapping keys: %s", planner_keys)
@@ -1450,7 +1516,7 @@ if generate_btn:
     columns_by_key = get_columns_for_keys(planner_keys)
     candidate_columns = flatten_columns(columns_by_key)
 
-    picked_columns = agent_pick_relevant_columns(llm, query, planner_keys, candidate_columns)
+    picked_columns = agent_pick_relevant_columns(mapping_llm, query, planner_keys, candidate_columns)
     if not picked_columns:
         picked_columns = candidate_columns
     logger.info("Column agent selected columns: %s", picked_columns)
@@ -1563,7 +1629,8 @@ if generate_btn:
     st.markdown(f"""
     <div style='background-color: #1A1F2E; border-left: 3px solid #4A90E2; padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem;'>
         <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 500;'>
-            🤖 Generated by <strong>{provider_display} - {model_name}</strong>
+            📊 Mapping: <strong>{mapping_provider_display} - {mapping_model_name}</strong><br/>
+            🤖 Response: <strong>{response_provider_display} - {response_model_name}</strong>
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -1571,22 +1638,75 @@ if generate_btn:
     # Toggle streaming behavior (set True to stream by default)
     stream = True
 
-    with st.spinner("Generating analysis..."):
-        if stream:
-            response_container = st.empty()
-            full_response = ""
-            for chunk in llm.stream(formatted_prompt):
-                chunk_text = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                full_response += chunk_text
-                rendered = clean_response(full_response)
-                response_container.markdown(rendered, unsafe_allow_html=True)
-            output_tokens = count_tokens(full_response)
-        else:
-            response = llm.invoke(formatted_prompt)
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            output_tokens = count_tokens(response_text)
-            rendered = clean_response(response_text)
-            st.markdown(rendered, unsafe_allow_html=True)
+    # Initialize cache
+    embeddings = get_embeddings()
+    response_cache = get_response_cache(embeddings)
+    
+    # Check cache (using RESPONSE LLM provider)
+    cached_result = response_cache.get(
+        query=query.strip(),
+        items=selected_items,
+        mapping_keys=final_mapping_keys,
+        comparison_type=comparison_type,
+        provider=response_provider_display
+    )
+
+    if cached_result:
+        # CACHE HIT
+        response_text, metadata = cached_result
+        st.success("⚡ **Cache Hit!** Retrieved instant response from semantic cache.")
+        rendered = clean_response(response_text)
+        st.markdown(rendered, unsafe_allow_html=True)
+        
+        # Show cache metadata
+        with st.expander("📊 Cache Details"):
+            st.json({
+                "cache_hit": True,
+                "similarity_threshold": 0.95,
+                "cached_at": metadata.get("timestamp", "N/A"),
+                "original_model": metadata.get("model", "Unknown")
+            })
+        
+        output_tokens = count_tokens(response_text)
+        # Set input tokens from metadata if available, else keep current
+        if "input_tokens" in metadata:
+            input_tokens = metadata["input_tokens"]
+            
+    else:
+        # CACHE MISS
+        with st.spinner("Generating analysis..."):
+            if stream:
+                response_container = st.empty()
+                full_response = ""
+                for chunk in response_llm.stream(formatted_prompt):
+                    chunk_text = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                    full_response += chunk_text
+                    rendered = clean_response(full_response)
+                    response_container.markdown(rendered, unsafe_allow_html=True)
+                output_tokens = count_tokens(full_response)
+                response_text = full_response
+            else:
+                response = response_llm.invoke(formatted_prompt)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                output_tokens = count_tokens(response_text)
+                rendered = clean_response(response_text)
+                st.markdown(rendered, unsafe_allow_html=True)
+        
+        # Store in cache
+        response_cache.set(
+            query=query.strip(),
+            items=selected_items,
+            mapping_keys=final_mapping_keys,
+            comparison_type=comparison_type,
+            provider=response_provider_display,
+            response=response_text,
+            metadata={
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "model": response_model_name
+            }
+        )
+        st.info("💾 Response cached for future queries")
 
     # Metrics Section
     st.markdown('''
@@ -1596,15 +1716,36 @@ if generate_btn:
     ''', unsafe_allow_html=True)
 
     with st.expander("Token Usage & Model Info", expanded=False):
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Input Tokens", input_tokens)
         with col2:
             st.metric("Output Tokens", output_tokens)
         with col3:
             st.metric("Total Tokens", input_tokens + output_tokens)
-        with col4:
-            st.metric("Model", f"{provider_display}\n{model_name}")
+        
+        # LLM-wise token breakdown
+        st.markdown("---")
+        st.markdown("**🔍 Token Usage by LLM Provider:**")
+        tok_col1, tok_col2 = st.columns(2)
+        with tok_col1:
+            st.markdown(f"""
+            <div style='background-color: #1A1F2E; padding: 1rem; border-radius: 6px; border: 1px solid #34394F;'>
+                <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 600;'>📊 {mapping_provider_display}</p>
+                <p style='color: #E8EAED; margin: 0.75rem 0 0 0; font-size: 1.5rem; font-weight: 700;'>{input_tokens}</p>
+                <p style='color: #B0B5C2; margin: 0.25rem 0 0 0; font-size: 0.75rem;'>tokens used for mapping</p>
+                <p style='color: #7EC699; margin: 0.5rem 0 0 0; font-size: 0.75rem;'>Model: {mapping_model_name}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        with tok_col2:
+            st.markdown(f"""
+            <div style='background-color: #1A1F2E; padding: 1rem; border-radius: 6px; border: 1px solid #34394F;'>
+                <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 600;'>🤖 {response_provider_display}</p>
+                <p style='color: #E8EAED; margin: 0.75rem 0 0 0; font-size: 1.5rem; font-weight: 700;'>{output_tokens}</p>
+                <p style='color: #B0B5C2; margin: 0.25rem 0 0 0; font-size: 0.75rem;'>tokens used for response</p>
+                <p style='color: #7EC699; margin: 0.5rem 0 0 0; font-size: 0.75rem;'>Model: {response_model_name}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
     # Retrieved Sources Section
     st.markdown('''

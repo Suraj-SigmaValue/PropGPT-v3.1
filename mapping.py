@@ -595,7 +595,7 @@ COLUMN_MAPPING_Location = {
     "Date up to which village data is available in the premanual.": [
         "date till",
     ],
-    "Development agreement": [
+    "No of Development agreement and Total area conveyed for development in Sqmtr": [
         "no. of d.a. registered",
         "total area conveyed for developement",
     ],
@@ -637,7 +637,7 @@ CATEGORY_MAPPING_Location = {
         "BHK wise Carpet Area range wise Units sold",
         "BHK wise Carpet area range wise Total sales(INR)",
         "BHK wise carpet area range wise carpet area  sold or consumed in sqft",
-        "Development agreement",
+        "No of Development agreement and Total area conveyed for development in Sqmtr",
         "Property Type wise Carpet area sold or consumed in sqft",
         "Property type wise Average Carpet Area in sqft",
         "Property type wise Carpet Area range wise Units sold",

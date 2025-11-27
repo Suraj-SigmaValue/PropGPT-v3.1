@@ -41,6 +41,10 @@ MARKDOWN FORMATTING RULES (CRITICAL):
 6. NO blank lines after subheadings - content should start immediately
 7. NO TABLES - use bullet points instead
 8. NO separate year bullets - integrate year info into content
+9. NEVER break lines in the middle of a title - keep entire title on one line
+10. NEVER break lines in the middle of parentheses - keep opening and closing parentheses on same line
+11. NEVER break lines in the middle of a bullet point - complete each bullet point on one line
+12. Keep year ranges like (2020-2024) together on the same line as the title
 
 REQUEST
 - Query: "{question}"
@@ -111,6 +115,10 @@ MARKDOWN FORMATTING RULES (CRITICAL):
 6. NO blank lines after subheadings - content should start immediately
 7. NO TABLES - use bullet points instead
 8. NO separate year bullets - integrate year info into content
+9. NEVER break lines in the middle of a title - keep entire title on one line
+10. NEVER break lines in the middle of parentheses - keep opening and closing parentheses on same line
+11. NEVER break lines in the middle of a bullet point - complete each bullet point on one line
+12. Keep year ranges like (2020-2024) together on the same line as the title
 
 REQUEST
 - Query: "{question}"
@@ -194,6 +202,10 @@ MARKDOWN FORMATTING RULES (CRITICAL):
 6. NO blank lines after subheadings - content should start immediately
 7. NO TABLES - use bullet points instead
 8. NO separate year bullets - integrate any time info into content if present
+9. NEVER break lines in the middle of a title - keep entire title on one line
+10. NEVER break lines in the middle of parentheses - keep opening and closing parentheses on same line
+11. NEVER break lines in the middle of a bullet point - complete each bullet point on one line
+12. Keep year ranges together on the same line as the title
 
 REQUEST
 - Query: "{question}"
