@@ -6,7 +6,24 @@ Contains prompts for different comparison types:
 - Project-wise analysis (no year-wise trends)
 """
 
-from typing import List
+from typing import List, Dict, Optional
+
+
+def format_chat_history(chat_history: List[Dict[str, str]]) -> str:
+    """Format chat history for inclusion in prompt."""
+    if not chat_history:
+        return "No previous conversation."
+    
+    formatted = []
+    for msg in chat_history:
+        role = msg["role"].upper()
+        content = msg["content"]
+        # Truncate very long messages to save tokens
+        if len(content) > 500:
+            content = content[:500] + "..."
+        formatted.append(f"{role}: {content}")
+    
+    return "\n".join(formatted)
 
 
 def build_location_prompt(
@@ -16,6 +33,7 @@ def build_location_prompt(
     selected_columns: List[str],
     context: str,
     category_summary: str,
+    chat_history: Optional[List[Dict[str, str]]] = None
 ) -> str:
     """
     Build prompt for location-wise comparison analysis.
@@ -28,6 +46,8 @@ def build_location_prompt(
         items_display = f"{items[0]} vs {items[1]}"
     else:
         items_display = ", ".join(items[:-1]) + f" and {items[-1]}"
+
+    history_str = format_chat_history(chat_history) if chat_history else "No previous conversation."
 
     return f"""
 You are PropGPT, an elite real-estate analyst. Answer in clean, well-structured MARKDOWN.
@@ -45,6 +65,9 @@ MARKDOWN FORMATTING RULES (CRITICAL):
 10. NEVER break lines in the middle of parentheses - keep opening and closing parentheses on same line
 11. NEVER break lines in the middle of a bullet point - complete each bullet point on one line
 12. Keep year ranges like (2020-2024) together on the same line as the title
+
+PREVIOUS CONVERSATION HISTORY:
+{history_str}
 
 REQUEST
 - Query: "{question}"
@@ -90,6 +113,7 @@ def build_city_prompt(
     selected_columns: List[str],
     context: str,
     category_summary: str,
+    chat_history: Optional[List[Dict[str, str]]] = None
 ) -> str:
     """
     Build prompt for city-wise comparison analysis.
@@ -102,6 +126,8 @@ def build_city_prompt(
         items_display = f"{items[0]} vs {items[1]}"
     else:
         items_display = ", ".join(items[:-1]) + f" and {items[-1]}"
+
+    history_str = format_chat_history(chat_history) if chat_history else "No previous conversation."
 
     return f"""
 You are PropGPT, an elite real-estate analyst. Answer in clean, well-structured MARKDOWN.
@@ -119,6 +145,9 @@ MARKDOWN FORMATTING RULES (CRITICAL):
 10. NEVER break lines in the middle of parentheses - keep opening and closing parentheses on same line
 11. NEVER break lines in the middle of a bullet point - complete each bullet point on one line
 12. Keep year ranges like (2020-2024) together on the same line as the title
+
+PREVIOUS CONVERSATION HISTORY:
+{history_str}
 
 REQUEST
 - Query: "{question}"
@@ -177,6 +206,7 @@ def build_project_prompt(
     selected_columns: List[str],
     context: str,
     category_summary: str,
+    chat_history: Optional[List[Dict[str, str]]] = None
 ) -> str:
     """
     Build prompt for project-wise comparison analysis.
@@ -189,6 +219,8 @@ def build_project_prompt(
         items_display = f"{items[0]} vs {items[1]}"
     else:
         items_display = ", ".join(items[:-1]) + f" and {items[-1]}"
+
+    history_str = format_chat_history(chat_history) if chat_history else "No previous conversation."
 
     return f"""
 You are PropGPT, an elite real-estate analyst. Answer in clean, well-structured MARKDOWN.
@@ -206,6 +238,9 @@ MARKDOWN FORMATTING RULES (CRITICAL):
 10. NEVER break lines in the middle of parentheses - keep opening and closing parentheses on same line
 11. NEVER break lines in the middle of a bullet point - complete each bullet point on one line
 12. Keep year ranges together on the same line as the title
+
+PREVIOUS CONVERSATION HISTORY:
+{history_str}
 
 REQUEST
 - Query: "{question}"

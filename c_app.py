@@ -1367,422 +1367,457 @@ with st.sidebar:
     st.divider()
 
     # Custom Query
-    st.write("**Analysis Query**")
-    query = st.text_area(
-        "Query",
-        placeholder="e.g., Compare demand trends for residential properties",
-        help="Leave empty for automatic analysis",
-        height=80,
-        label_visibility="collapsed"
-    )
 
-# Main content area
-st.divider()
+def is_query_relevant(query: str, llm) -> bool:
+    """Check if user query is relevant to real estate analysis."""
+    relevance_prompt = f"""You are a relevance checker for a real estate analysis assistant.
 
-# Analysis Button
-generate_btn = st.button(
-    "Generate Analysis",
-    type="primary",
-    use_container_width=True,
-    help="Execute analysis with selected parameters"
-)
+User Query: "{query}"
 
-if generate_btn:
-    # Input validation
-    if not selected_items:
-        st.error(f"Please select at least one {comparison_type} to analyze.")
-        st.stop()
-    
-    if len(selected_items) > 5:
-        st.error(f"Maximum 5 {comparison_type}s can be analyzed at once.")
-        st.stop()
-    
-    # Check for duplicates (should be prevented by multiselect but verify)
-    if len(set(i.lower() for i in selected_items)) != len(selected_items):
-        st.markdown(f"""
-            <div style='background-color: #fce4e4; color: #cc0033; padding: 1rem; border-radius: 8px; margin: 1rem 0;'>
-                <strong>❌ Error:</strong> Please select different {comparison_type}s for comparison.""")
+Is this query related to real estate analysis, property data, market trends, pricing, sales, demand, supply, or similar real estate topics?
 
-    if not categories:
-        st.error("Please select at least one category to analyze.")
-        st.stop()
+Respond with ONLY "YES" or "NO".
 
-    if not query or not query.strip():
-        # Create default query based on number of items
-        if len(selected_items) == 1:
-            query = f"Analyze {', '.join(categories).lower()} metrics for {selected_items[0]}"
-        elif len(selected_items) == 2:
-            items_display = f"{selected_items[0]} and {selected_items[1]}"
-            query = f"Compare {', '.join(categories).lower()} metrics for {items_display}"
-        else:
-            items_display = ", ".join(selected_items[:-1]) + f" and {selected_items[-1]}"
-            query = f"Compare {', '.join(categories).lower()} metrics for {items_display}"
-        st.info(f"Using default query: {query}")
+YES - if about real estate, properties, market analysis
+NO - if about unrelated topics like weather, sports, recipes, etc.
 
-    logger.info("Query: '%s'", query)
+Response:"""
 
     try:
-        mapping_llm = get_llm(selected_mapping_llm_provider)
-        if selected_mapping_llm_provider == "gemini":
-            mapping_model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
-            mapping_provider_display = "Google Gemini"
-        else:
-            mapping_model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            mapping_provider_display = "OpenAI"
-        
-        response_llm = get_llm(selected_response_llm_provider)
-        if selected_response_llm_provider == "gemini":
-            response_model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
-            response_provider_display = "Google Gemini"
-        else:
-            response_model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response_provider_display = "OpenAI"
-    except Exception as exc:
-        logger.error("Failed to initialize LLM: %s", exc)
-        st.error(f"LLM initialization failed: {exc}")
-        st.stop()
+        response = llm.invoke(relevance_prompt)
+        answer = response.content.strip().upper() if hasattr(response, 'content') else str(response).strip().upper()
+        return "YES" in answer
+    except Exception as e:
+        logger.warning(f"Relevance check failed: {e}. Assuming relevant.")
+        return True
 
-    # Get correct mapping for selected comparison type
-    cat_map, col_map = load_mappings(comparison_type)
-    CATEGORY_MAPPING = cat_map
-    COLUMN_MAPPING = col_map
+# ---------------- CHAT INTERFACE ----------------
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    # For Project comparisons we do not want to restrict to 2020-2024
-    req_years = None if str(comparison_type).strip().lower() == "project" else [2020, 2021, 2022, 2023, 2024]
-    df, defaults, id_col = load_and_clean_data(
-        excel_path,
-        pickle_path,
-        comparison_type=comparison_type,
-        items=selected_items,
-        years=req_years
-    )
+# Display chat messages from history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    if df is None or df.empty:
-        st.error(f"No data found for selected {comparison_type}s.")
-        # Provide helpful debug info
+# Accept user input
+if query := st.chat_input("Ask a question about the selected items..."): 
+    st.session_state.messages.append({"role": "user", "content": query})
+    
+    with st.chat_message("user"):
+        st.markdown(query)
+
+    with st.chat_message("assistant"):
+        response_text = None
+        # Relevance check first
         try:
-            if Path(pickle_path).exists():
-                dbg_df = joblib.load(pickle_path)
-                dbg_df.columns = [normalize_colname(str(c)) for c in dbg_df.columns]
-                type_df = dbg_df[dbg_df["__type"] == comparison_type]
-                st.markdown("**Debug info (sample):**")
-                st.write("Available Columns:", type_df.columns.tolist())
-                configured_id = SHEET_CONFIG[comparison_type]["id_col"]
-                st.write("Configured ID column (from config):", configured_id)
+            temp_llm = get_llm(selected_response_llm_provider)
+            if not is_query_relevant(query, temp_llm):
+                irrelevant_msg = """I appreciate your question, but I'm specifically designed to help with **real estate analysis** topics such as:
 
-                # Try to resolve configured id column to an actual column name
-                resolved = configured_id
-                if resolved not in type_df.columns:
-                    cols_norm = {normalize_colname(str(c)): c for c in type_df.columns}
-                    if resolved in cols_norm:
-                        resolved = cols_norm[resolved]
-                    else:
-                        try:
-                            best, score = process.extractOne(resolved, list(cols_norm.keys()))
-                            if score >= 70:
-                                resolved = cols_norm[best]
-                            else:
-                                resolved = None
-                        except Exception:
-                            resolved = None
+- Property market trends and pricing
+- Sales and demand analysis  
+- Location and project comparisons
+- Supply and inventory metrics
 
-                if resolved and resolved in type_df.columns:
-                    sample_vals = type_df[resolved].dropna().astype(str).str.strip().str.lower().unique()[:20]
-                    st.write(f"Sample values for resolved id column '{resolved}':", list(sample_vals))
-                else:
-                    st.write("Could not resolve the configured ID column to any available header.")
+Could you please ask a question related to real estate or property analysis? 🏡"""
+                
+                st.warning(irrelevant_msg)
+                st.session_state.messages.append({"role": "assistant", "content": irrelevant_msg})
+                st.stop()
+        except Exception as e:
+            logger.warning(f"Relevance check error: {e}")
+
+        # Input validation
+        if not selected_items:
+            st.error(f"Please select at least one {comparison_type} to analyze.")
+            st.stop()
+    
+        if len(selected_items) > 5:
+            st.error(f"Maximum 5 {comparison_type}s can be analyzed at once.")
+            st.stop()
+    
+        # Check for duplicates (should be prevented by multiselect but verify)
+        if len(set(i.lower() for i in selected_items)) != len(selected_items):
+            st.markdown(f"""
+                <div style='background-color: #fce4e4; color: #cc0033; padding: 1rem; border-radius: 8px; margin: 1rem 0;'>
+                    <strong>❌ Error:</strong> Please select different {comparison_type}s for comparison.""")
+
+        if not categories:
+            st.error("Please select at least one category to analyze.")
+            st.stop()
+
+        # Query guaranteed from chat_input
+
+        logger.info("Query: '%s'", query)
+
+        try:
+            mapping_llm = get_llm(selected_mapping_llm_provider)
+            if selected_mapping_llm_provider == "gemini":
+                mapping_model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
+                mapping_provider_display = "Google Gemini"
+            else:
+                mapping_model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                mapping_provider_display = "OpenAI"
+        
+            response_llm = get_llm(selected_response_llm_provider)
+            if selected_response_llm_provider == "gemini":
+                response_model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
+                response_provider_display = "Google Gemini"
+            else:
+                response_model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                response_provider_display = "OpenAI"
         except Exception as exc:
-            st.write("Failed to load debug info:", str(exc))
+            logger.error("Failed to initialize LLM: %s", exc)
+            st.error(f"LLM initialization failed: {exc}")
+            st.stop()
 
-        st.stop()
+        # Get correct mapping for selected comparison type
+        cat_map, col_map = load_mappings(comparison_type)
+        CATEGORY_MAPPING = cat_map
+        COLUMN_MAPPING = col_map
 
-    logger.info("DataFrame columns after filtering: %s", df.columns.tolist())
+        # For Project comparisons we do not want to restrict to 2020-2024
+        req_years = None if str(comparison_type).strip().lower() == "project" else [2020, 2021, 2022, 2023, 2024]
+        df, defaults, id_col = load_and_clean_data(
+            excel_path,
+            pickle_path,
+            comparison_type=comparison_type,
+            items=selected_items,
+            years=req_years
+        )
 
-    embeddings = get_embeddings()
-
-    selected_categories = [cat.lower() for cat in categories]
-    candidate_keys = []
-    for category in selected_categories:
-        candidate_keys.extend(get_category_keys(category))
-    if not candidate_keys:
-        candidate_keys = list(COLUMN_MAPPING.keys())
-    candidate_keys = sorted(set(candidate_keys))
-
-    planner_keys = planner_identify_mapping_keys(mapping_llm, query, candidate_keys)
-    if not planner_keys:
-        planner_keys = candidate_keys
-    logger.info("Planner selected mapping keys: %s", planner_keys)
-
-    columns_by_key = get_columns_for_keys(planner_keys)
-    candidate_columns = flatten_columns(columns_by_key)
-
-    picked_columns = agent_pick_relevant_columns(mapping_llm, query, planner_keys, candidate_columns)
-    if not picked_columns:
-        picked_columns = candidate_columns
-    logger.info("Column agent selected columns: %s", picked_columns)
-
-    filtered_columns_by_key = {}
-    for key, cols in columns_by_key.items():
-        chosen = [col for col in cols if col in picked_columns]
-        if chosen:
-            filtered_columns_by_key[key] = chosen
-    if not filtered_columns_by_key:
-        filtered_columns_by_key = columns_by_key
-
-    final_mapping_keys = list(filtered_columns_by_key.keys())
-    final_columns = flatten_columns(filtered_columns_by_key)
-
-    documents = create_documents(df, selected_items, defaults, filtered_columns_by_key, comparison_type=comparison_type, id_col=id_col)
-    if not documents:
-        # Provide debug info to help identify why documents could not be built
-        st.error("❌ Failed to build knowledge documents for the selected filters.")
-        with st.expander("Debug: why no documents?", expanded=True):
-            st.write("Resolved id_col:", id_col)
-            st.write("Dataframe columns:", df.columns.tolist())
-            st.write("Final mapping keys:", final_mapping_keys)
-            st.write("Final columns candidate list:", final_columns)
-            key_valid = {}
-            for key, cols in filtered_columns_by_key.items():
-                valid = [c for c in cols if c in df.columns]
-                key_valid[key] = valid
-            st.write("Per-mapping-key valid columns (present in df):", key_valid)
-            # Show sample rows for the selected items (if present) to inspect values
+        if df is None or df.empty:
+            st.error(f"No data found for selected {comparison_type}s.")
+            # Provide helpful debug info
             try:
-                sel_vals = df[id_col].dropna().astype(str).str.strip().str.lower().unique()[:50]
-                st.write(f"Sample unique values in '{id_col}':", list(sel_vals))
+                if Path(pickle_path).exists():
+                    dbg_df = joblib.load(pickle_path)
+                    dbg_df.columns = [normalize_colname(str(c)) for c in dbg_df.columns]
+                    type_df = dbg_df[dbg_df["__type"] == comparison_type]
+                    st.markdown("**Debug info (sample):**")
+                    st.write("Available Columns:", type_df.columns.tolist())
+                    configured_id = SHEET_CONFIG[comparison_type]["id_col"]
+                    st.write("Configured ID column (from config):", configured_id)
+
+                    # Try to resolve configured id column to an actual column name
+                    resolved = configured_id
+                    if resolved not in type_df.columns:
+                        cols_norm = {normalize_colname(str(c)): c for c in type_df.columns}
+                        if resolved in cols_norm:
+                            resolved = cols_norm[resolved]
+                        else:
+                            try:
+                                best, score = process.extractOne(resolved, list(cols_norm.keys()))
+                                if score >= 70:
+                                    resolved = cols_norm[best]
+                                else:
+                                    resolved = None
+                            except Exception:
+                                resolved = None
+
+                    if resolved and resolved in type_df.columns:
+                        sample_vals = type_df[resolved].dropna().astype(str).str.strip().str.lower().unique()[:20]
+                        st.write(f"Sample values for resolved id column '{resolved}':", list(sample_vals))
+                    else:
+                        st.write("Could not resolve the configured ID column to any available header.")
             except Exception as exc:
-                st.write("Failed to sample id_col values:", str(exc))
-        st.stop()
+                st.write("Failed to load debug info:", str(exc))
 
-    cache_key = build_cache_key(selected_items, final_mapping_keys, final_columns)
-    with st.spinner("🔄 Preparing retrieval index..."):
-        vector_store = build_vector_store(documents, embeddings, cache_key)
-        bm25_retriever = build_bm25_retriever(documents)
+            st.stop()
 
-    query_context_docs = hybrid_retrieve(query, final_mapping_keys, vector_store, bm25_retriever, top_k=6)
-    if not query_context_docs:
-        st.error("❌ Retrieval failed to surface relevant context. Refine your query and try again.")
-        st.stop()
-    context = "\n\n".join(doc.page_content.strip() for doc in query_context_docs)
+        logger.info("DataFrame columns after filtering: %s", df.columns.tolist())
+
+        embeddings = get_embeddings()
+
+        selected_categories = [cat.lower() for cat in categories]
+        candidate_keys = []
+        for category in selected_categories:
+            candidate_keys.extend(get_category_keys(category))
+        if not candidate_keys:
+            candidate_keys = list(COLUMN_MAPPING.keys())
+        candidate_keys = sorted(set(candidate_keys))
+
+        planner_keys = planner_identify_mapping_keys(mapping_llm, query, candidate_keys)
+        if not planner_keys:
+            planner_keys = candidate_keys
+        logger.info("Planner selected mapping keys: %s", planner_keys)
+
+        columns_by_key = get_columns_for_keys(planner_keys)
+        candidate_columns = flatten_columns(columns_by_key)
+
+        picked_columns = agent_pick_relevant_columns(mapping_llm, query, planner_keys, candidate_columns)
+        if not picked_columns:
+            picked_columns = candidate_columns
+        logger.info("Column agent selected columns: %s", picked_columns)
+
+        filtered_columns_by_key = {}
+        for key, cols in columns_by_key.items():
+            chosen = [col for col in cols if col in picked_columns]
+            if chosen:
+                filtered_columns_by_key[key] = chosen
+        if not filtered_columns_by_key:
+            filtered_columns_by_key = columns_by_key
+
+        final_mapping_keys = list(filtered_columns_by_key.keys())
+        final_columns = flatten_columns(filtered_columns_by_key)
+
+        documents = create_documents(df, selected_items, defaults, filtered_columns_by_key, comparison_type=comparison_type, id_col=id_col)
+        if not documents:
+            # Provide debug info to help identify why documents could not be built
+            st.error("❌ Failed to build knowledge documents for the selected filters.")
+            with st.expander("Debug: why no documents?", expanded=True):
+                st.write("Resolved id_col:", id_col)
+                st.write("Dataframe columns:", df.columns.tolist())
+                st.write("Final mapping keys:", final_mapping_keys)
+                st.write("Final columns candidate list:", final_columns)
+                key_valid = {}
+                for key, cols in filtered_columns_by_key.items():
+                    valid = [c for c in cols if c in df.columns]
+                    key_valid[key] = valid
+                st.write("Per-mapping-key valid columns (present in df):", key_valid)
+                # Show sample rows for the selected items (if present) to inspect values
+                try:
+                    sel_vals = df[id_col].dropna().astype(str).str.strip().str.lower().unique()[:50]
+                    st.write(f"Sample unique values in '{id_col}':", list(sel_vals))
+                except Exception as exc:
+                    st.write("Failed to sample id_col values:", str(exc))
+            st.stop()
+
+        cache_key = build_cache_key(selected_items, final_mapping_keys, final_columns)
+        with st.spinner("🔄 Preparing retrieval index..."):
+            vector_store = build_vector_store(documents, embeddings, cache_key)
+            bm25_retriever = build_bm25_retriever(documents)
+
+        query_context_docs = hybrid_retrieve(query, final_mapping_keys, vector_store, bm25_retriever, top_k=6)
+        if not query_context_docs:
+            st.error("❌ Retrieval failed to surface relevant context. Refine your query and try again.")
+            st.stop()
+        context = "\n\n".join(doc.page_content.strip() for doc in query_context_docs)
   
-    category_summary = ", ".join(categories)
+        category_summary = ", ".join(categories)
 
-    # Show Query Intelligence outputs in UI
-    with st.expander("Query Intelligence Outputs", expanded=False):
-        st.markdown("#### Selected Mapping Keys")
-        st.write(final_mapping_keys)
-        st.markdown("#### Selected Columns (Agent)")
-        st.write(final_columns)
+        # Show Query Intelligence outputs in UI
+        with st.expander("Query Intelligence Outputs", expanded=False):
+            st.markdown("#### Selected Mapping Keys")
+            st.write(final_mapping_keys)
+            st.markdown("#### Selected Columns (Agent)")
+            st.write(final_columns)
 
 
-    # Analysis Configuration Summary
-    st.markdown('''
-        <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1.5rem 0;'>
-            <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Configuration</h3>
-        </div>
-    ''', unsafe_allow_html=True)
+        # Analysis Configuration Summary
+        st.markdown('''
+            <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1.5rem 0;'>
+                <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Configuration</h3>
+            </div>
+        ''', unsafe_allow_html=True)
     
-    # Select appropriate prompt function based on comparison type
-    if comparison_type.strip().lower() == "location":
-        build_prompt_func = build_location_prompt
-    elif comparison_type.strip().lower() == "city":
-        build_prompt_func = build_city_prompt
-    elif comparison_type.strip().lower() == "project":
-        build_prompt_func = build_project_prompt
-    else:
-        # Default to location prompt if comparison type is not recognized
-        logger.warning(f"Unknown comparison type '{comparison_type}', using location prompt")
-        build_prompt_func = build_location_prompt
+        # Select appropriate prompt function based on comparison type
+        if comparison_type.strip().lower() == "location":
+            build_prompt_func = build_location_prompt
+        elif comparison_type.strip().lower() == "city":
+            build_prompt_func = build_city_prompt
+        elif comparison_type.strip().lower() == "project":
+            build_prompt_func = build_project_prompt
+        else:
+            # Default to location prompt if comparison type is not recognized
+            logger.warning(f"Unknown comparison type '{comparison_type}', using location prompt")
+            build_prompt_func = build_location_prompt
     
-    formatted_prompt = build_prompt_func(
-        question=query.strip(),
-        items=selected_items,
-        mapping_keys=final_mapping_keys,
-        selected_columns=final_columns,
-        context=context,
-        category_summary=category_summary
-    )
+        formatted_prompt = build_prompt_func(
+            question=query.strip(),
+            items=selected_items,
+            mapping_keys=final_mapping_keys,
+            selected_columns=final_columns,
+            context=context,
+        category_summary=category_summary,
+                chat_history=st.session_state.messages[:-1]
+        )
     
-    # Display configuration in a collapsible section
-    with st.expander("View Detailed Configuration", expanded=False):
-        config = {
-            "Query": query.strip(),
-            "Items": {f"Item {i+1}": item for i, item in enumerate(selected_items)},
-            "Categories": categories,
-            "Selected Metrics": final_mapping_keys,
-            "Data Points": final_columns
-        }
-        st.json(config)
+        # Display configuration in a collapsible section
+        with st.expander("View Detailed Configuration", expanded=False):
+            config = {
+                "Query": query.strip(),
+                "Items": {f"Item {i+1}": item for i, item in enumerate(selected_items)},
+                "Categories": categories,
+                "Selected Metrics": final_mapping_keys,
+                "Data Points": final_columns
+            }
+            st.json(config)
  
 
-    input_tokens = count_tokens(formatted_prompt)
-    logger.info("Input tokens: %s", input_tokens)
+        input_tokens = count_tokens(formatted_prompt)
+        logger.info("Input tokens: %s", input_tokens)
 
-    # Results Section
-    st.markdown('''
-        <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1.5rem 0;'>
-            <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Analysis Results</h3>
+        # Results Section
+        st.markdown('''
+            <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1.5rem 0;'>
+                <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Analysis Results</h3>
+            </div>
+        ''', unsafe_allow_html=True)
+
+        # Model indicator
+        st.markdown(f"""
+        <div style='background-color: #1A1F2E; border-left: 3px solid #4A90E2; padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem;'>
+            <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 500;'>
+                📊 Mapping: <strong>{mapping_provider_display} - {mapping_model_name}</strong><br/>
+                🤖 Response: <strong>{response_provider_display} - {response_model_name}</strong>
+            </p>
         </div>
-    ''', unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-    # Model indicator
-    st.markdown(f"""
-    <div style='background-color: #1A1F2E; border-left: 3px solid #4A90E2; padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem;'>
-        <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 500;'>
-            📊 Mapping: <strong>{mapping_provider_display} - {mapping_model_name}</strong><br/>
-            🤖 Response: <strong>{response_provider_display} - {response_model_name}</strong>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+        # Toggle streaming behavior (set True to stream by default)
+        stream = True
 
-    # Toggle streaming behavior (set True to stream by default)
-    stream = True
-
-    # Initialize cache
-    embeddings = get_embeddings()
-    response_cache = get_response_cache(embeddings)
+        # Initialize cache
+        embeddings = get_embeddings()
+        response_cache = get_response_cache(embeddings)
     
-    # Check cache (using RESPONSE LLM provider)
-    cached_result = response_cache.get(
-        query=query.strip(),
-        items=selected_items,
-        mapping_keys=final_mapping_keys,
-        comparison_type=comparison_type,
-        provider=response_provider_display
-    )
-
-    if cached_result:
-        # CACHE HIT
-        response_text, metadata = cached_result
-        st.success("⚡ **Cache Hit!** Retrieved instant response from semantic cache.")
-        rendered = clean_response(response_text)
-        st.markdown(rendered, unsafe_allow_html=True)
-        
-        # Show cache metadata
-        with st.expander("📊 Cache Details"):
-            st.json({
-                "cache_hit": True,
-                "similarity_threshold": 0.95,
-                "cached_at": metadata.get("timestamp", "N/A"),
-                "original_model": metadata.get("model", "Unknown")
-            })
-        
-        output_tokens = count_tokens(response_text)
-        # Set input tokens from metadata if available, else keep current
-        if "input_tokens" in metadata:
-            input_tokens = metadata["input_tokens"]
-            
-    else:
-        # CACHE MISS
-        with st.spinner("Generating analysis..."):
-            if stream:
-                response_container = st.empty()
-                full_response = ""
-                for chunk in response_llm.stream(formatted_prompt):
-                    chunk_text = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                    full_response += chunk_text
-                    rendered = clean_response(full_response)
-                    response_container.markdown(rendered, unsafe_allow_html=True)
-                output_tokens = count_tokens(full_response)
-                response_text = full_response
-            else:
-                response = response_llm.invoke(formatted_prompt)
-                response_text = response.content if hasattr(response, 'content') else str(response)
-                output_tokens = count_tokens(response_text)
-                rendered = clean_response(response_text)
-                st.markdown(rendered, unsafe_allow_html=True)
-        
-        # Store in cache
-        response_cache.set(
+        # Check cache (using RESPONSE LLM provider)
+        cached_result = response_cache.get(
             query=query.strip(),
             items=selected_items,
             mapping_keys=final_mapping_keys,
             comparison_type=comparison_type,
-            provider=response_provider_display,
-            response=response_text,
-            metadata={
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "model": response_model_name
-            }
+            provider=response_provider_display
         )
-        st.info("💾 Response cached for future queries")
 
-    # Metrics Section
-    st.markdown('''
-        <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1rem 0;'>
-            <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Analysis Metrics</h3>
-        </div>
-    ''', unsafe_allow_html=True)
-
-    with st.expander("Token Usage & Model Info", expanded=False):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Input Tokens", input_tokens)
-        with col2:
-            st.metric("Output Tokens", output_tokens)
-        with col3:
-            st.metric("Total Tokens", input_tokens + output_tokens)
+        if cached_result:
+            # CACHE HIT
+            response_text, metadata = cached_result
+            st.success("⚡ **Cache Hit!** Retrieved instant response from semantic cache.")
+            rendered = clean_response(response_text)
+            st.markdown(rendered, unsafe_allow_html=True)
         
-        # LLM-wise token breakdown
-        st.markdown("---")
-        st.markdown("**🔍 Token Usage by LLM Provider:**")
-        tok_col1, tok_col2 = st.columns(2)
-        with tok_col1:
-            st.markdown(f"""
-            <div style='background-color: #1A1F2E; padding: 1rem; border-radius: 6px; border: 1px solid #34394F;'>
-                <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 600;'>📊 {mapping_provider_display}</p>
-                <p style='color: #E8EAED; margin: 0.75rem 0 0 0; font-size: 1.5rem; font-weight: 700;'>{input_tokens}</p>
-                <p style='color: #B0B5C2; margin: 0.25rem 0 0 0; font-size: 0.75rem;'>tokens used for mapping</p>
-                <p style='color: #7EC699; margin: 0.5rem 0 0 0; font-size: 0.75rem;'>Model: {mapping_model_name}</p>
-            </div>
-            """, unsafe_allow_html=True)
-        with tok_col2:
-            st.markdown(f"""
-            <div style='background-color: #1A1F2E; padding: 1rem; border-radius: 6px; border: 1px solid #34394F;'>
-                <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 600;'>🤖 {response_provider_display}</p>
-                <p style='color: #E8EAED; margin: 0.75rem 0 0 0; font-size: 1.5rem; font-weight: 700;'>{output_tokens}</p>
-                <p style='color: #B0B5C2; margin: 0.25rem 0 0 0; font-size: 0.75rem;'>tokens used for response</p>
-                <p style='color: #7EC699; margin: 0.5rem 0 0 0; font-size: 0.75rem;'>Model: {response_model_name}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            # Show cache metadata
+            with st.expander("📊 Cache Details"):
+                st.json({
+                    "cache_hit": True,
+                    "similarity_threshold": 0.95,
+                    "cached_at": metadata.get("timestamp", "N/A"),
+                    "original_model": metadata.get("model", "Unknown")
+                })
+        
+            output_tokens = count_tokens(response_text)
+            # Set input tokens from metadata if available, else keep current
+            if "input_tokens" in metadata:
+                input_tokens = metadata["input_tokens"]
+        
+        else:
+            # CACHE MISS
+            with st.spinner("Generating analysis..."):
+                if stream:
+                    response_container = st.empty()
+                    full_response = ""
+                    for chunk in response_llm.stream(formatted_prompt):
+                        chunk_text = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                        full_response += chunk_text
+                        rendered = clean_response(full_response)
+                        response_container.markdown(rendered, unsafe_allow_html=True)
+                    output_tokens = count_tokens(full_response)
+                    response_text = full_response
+                else:
+                    response = response_llm.invoke(formatted_prompt)
+                    response_text = response.content if hasattr(response, 'content') else str(response)
+                    output_tokens = count_tokens(response_text)
+                    rendered = clean_response(response_text)
+                    st.markdown(rendered, unsafe_allow_html=True)
+        
+            # Store in cache
+            response_cache.set(
+                query=query.strip(),
+                items=selected_items,
+                mapping_keys=final_mapping_keys,
+                comparison_type=comparison_type,
+                provider=response_provider_display,
+                response=response_text,
+                metadata={
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "model": response_model_name
+                }
+            )
+            st.info("💾 Response cached for future queries")
 
-    # Retrieved Sources Section
-    st.markdown('''
-        <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1rem 0;'>
-            <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Data Sources</h3>
-        </div>
-    ''', unsafe_allow_html=True)
+        # Metrics Section
+        st.markdown('''
+            <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1rem 0;'>
+                <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Analysis Metrics</h3>
+            </div>
+        ''', unsafe_allow_html=True)
 
-    with st.expander("Retrieved Sources", expanded=False):
-        for idx, doc in enumerate(query_context_docs, start=1):
-            st.markdown(f"**Source {idx}** — {doc.metadata.get('mapping_key')}")
-            st.text(doc.page_content[:600] + ("..." if len(doc.page_content) > 600 else ""))
-            st.caption(str(doc.metadata))
+        with st.expander("Token Usage & Model Info", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Input Tokens", input_tokens)
+            with col2:
+                st.metric("Output Tokens", output_tokens)
+            with col3:
+                st.metric("Total Tokens", input_tokens + output_tokens)
+        
+            # LLM-wise token breakdown
             st.markdown("---")
+            st.markdown("**🔍 Token Usage by LLM Provider:**")
+            tok_col1, tok_col2 = st.columns(2)
+            with tok_col1:
+                st.markdown(f"""
+                <div style='background-color: #1A1F2E; padding: 1rem; border-radius: 6px; border: 1px solid #34394F;'>
+                    <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 600;'>📊 {mapping_provider_display}</p>
+                    <p style='color: #E8EAED; margin: 0.75rem 0 0 0; font-size: 1.5rem; font-weight: 700;'>{input_tokens}</p>
+                    <p style='color: #B0B5C2; margin: 0.25rem 0 0 0; font-size: 0.75rem;'>tokens used for mapping</p>
+                    <p style='color: #7EC699; margin: 0.5rem 0 0 0; font-size: 0.75rem;'>Model: {mapping_model_name}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            with tok_col2:
+                st.markdown(f"""
+                <div style='background-color: #1A1F2E; padding: 1rem; border-radius: 6px; border: 1px solid #34394F;'>
+                    <p style='color: #6BA3F5; margin: 0; font-size: 0.9rem; font-weight: 600;'>🤖 {response_provider_display}</p>
+                    <p style='color: #E8EAED; margin: 0.75rem 0 0 0; font-size: 1.5rem; font-weight: 700;'>{output_tokens}</p>
+                    <p style='color: #B0B5C2; margin: 0.25rem 0 0 0; font-size: 0.75rem;'>tokens used for response</p>
+                    <p style='color: #7EC699; margin: 0.5rem 0 0 0; font-size: 0.75rem;'>Model: {response_model_name}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-    st.markdown('''
-    <div style="background-color: #1A1F2E; border-left: 3px solid #4A90E2; padding: 1rem; border-radius: 4px; margin: 2rem 0 1.5rem 0;">
-        <p style="color: #6BA3F5; margin: 0; font-weight: 500;">Analysis completed successfully</p>
-    </div>
-''', unsafe_allow_html=True)
+        # Retrieved Sources Section
+        st.markdown('''
+            <div style='border-top: 2px solid #34394F; padding: 1.5rem 0; margin: 2rem 0 1rem 0;'>
+                <h3 style='color: #E8EAED; margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 0.5px;'>Data Sources</h3>
+            </div>
+        ''', unsafe_allow_html=True)
 
-    # Show project recommendations for Project search type
-    if comparison_type.strip().lower() == "project":
-        try:
-            project_recs = get_project_recommendations(df)
-            with st.expander("Project Recommendations", expanded=False):
-                for rec in project_recs:
-                    st.write(f"{rec['project name']} | {rec['final_location']} | {rec['city']}")
-        except Exception as e:
-            st.markdown(f"<div style='background-color: #2a1a1a; border-left: 3px solid #e74c3c; padding: 1rem; border-radius: 4px;'><p style='color: #ec7063; margin: 0;'>Could not generate project recommendations: {e}</p></div>", unsafe_allow_html=True)
+        with st.expander("Retrieved Sources", expanded=False):
+            for idx, doc in enumerate(query_context_docs, start=1):
+                st.markdown(f"**Source {idx}** — {doc.metadata.get('mapping_key')}")
+                st.text(doc.page_content[:600] + ("..." if len(doc.page_content) > 600 else ""))
+                st.caption(str(doc.metadata))
+                st.markdown("---")
 
-footer_html = '''
-<div style="border-top: 1px solid #34394F; padding: 2rem 0; margin: 3rem 0 0 0; text-align: center;">
-    <p style="color: #B0B5C2; margin: 0; font-size: 0.9rem; letter-spacing: 0.3px;">
-        <strong>PropGPT</strong> by SigmaValue - Advanced Real Estate Analysis Platform
-    </p>
-</div>
-'''
+        st.markdown('''
+        <div style="background-color: #1A1F2E; border-left: 3px solid #4A90E2; padding: 1rem; border-radius: 4px; margin: 2rem 0 1.5rem 0;">
+            <p style="color: #6BA3F5; margin: 0; font-weight: 500;">Analysis completed successfully</p>
+        </div>
+        ''', unsafe_allow_html=True)
 
-st.markdown(footer_html, unsafe_allow_html=True)
+        # Show project recommendations for Project search type
+        if comparison_type.strip().lower() == "project":
+            try:
+                project_recs = get_project_recommendations(df)
+                with st.expander("Project Recommendations", expanded=False):
+                    for rec in project_recs:
+                        st.write(f"{rec['project name']} | {rec['final_location']} | {rec['city']}")
+            except Exception as e:
+                st.markdown(f"<div style='background-color: #2a1a1a; border-left: 3px solid #e74c3c; padding: 1rem; border-radius: 4px;'><p style='color: #ec7063; margin: 0;'>Could not generate project recommendations: {e}</p></div>", unsafe_allow_html=True)
+
+        if response_text:
+            st.session_state.messages.append({"role": "assistant", "content": response_text})
+
+        footer_html = '''
+        <div style="border-top: 1px solid #34394F; padding: 2rem 0; margin: 3rem 0 0 0; text-align: center;">
+            <p style="color: #B0B5C2; margin: 0; font-size: 0.9rem; letter-spacing: 0.3px;">
+                <strong>PropGPT</strong> by SigmaValue - Advanced Real Estate Analysis Platform
+            </p>
+        </div>
+        '''
+
+        st.markdown(footer_html, unsafe_allow_html=True)
