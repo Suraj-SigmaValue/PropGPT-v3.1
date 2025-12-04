@@ -37,6 +37,7 @@ from config import (
     get_column_mapping
 )
 from agents import planner_identify_mapping_keys, agent_pick_relevant_columns
+from graph_agent import create_graph
 from prompts import build_location_prompt, build_city_prompt, build_project_prompt
 from response_cache import SemanticResponseCache
 
@@ -75,6 +76,11 @@ def load_mappings(comparison_type: str):
     except Exception:
         normalized_col_map = col_map
     return cat_map, normalized_col_map
+
+
+@st.cache_resource
+def get_graph_app():
+    return create_graph()
 
 
 def set_mappings_for_type(comparison_type: str) -> None:
@@ -1413,18 +1419,33 @@ if query := st.chat_input("Ask a question about the selected items..."):
         # Relevance check first
         try:
             temp_llm = get_llm(selected_response_llm_provider)
+            # General Query Handling (Bypass)
+            # Instead of stopping, we answer using the LLM directly
             if not is_query_relevant(query, temp_llm):
-                irrelevant_msg = """I appreciate your question, but I'm specifically designed to help with **real estate analysis** topics such as:
-
-- Property market trends and pricing
-- Sales and demand analysis  
-- Location and project comparisons
-- Supply and inventory metrics
-
-Could you please ask a question related to real estate or property analysis? 🏡"""
+                # Construct prompt with history
+                messages = st.session_state.messages + [{"role": "user", "content": query}]
                 
-                st.warning(irrelevant_msg)
-                st.session_state.messages.append({"role": "assistant", "content": irrelevant_msg})
+                with st.chat_message("assistant"):
+                    response_placeholder = st.empty()
+                    full_response = ""
+                    
+                    # Use response_llm (or temp_llm if response_llm is not available/suitable)
+                    # We'll use the configured response_llm
+                    try:
+                        # Stream response
+                        for chunk in temp_llm.stream(messages):
+                            content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                            full_response += content
+                            response_placeholder.markdown(full_response + "▌")
+                        response_placeholder.markdown(full_response)
+                        
+                        # Update history
+                        st.session_state.messages.append({"role": "assistant", "content": full_response})
+                        
+                    except Exception as e:
+                        st.error(f"Error generating response: {e}")
+                
+                # Stop execution here so we don't run the real estate logic
                 st.stop()
         except Exception as e:
             logger.warning(f"Relevance check error: {e}")
@@ -1539,18 +1560,62 @@ Could you please ask a question related to real estate or property analysis? �
             candidate_keys = list(COLUMN_MAPPING.keys())
         candidate_keys = sorted(set(candidate_keys))
 
-        planner_keys = planner_identify_mapping_keys(mapping_llm, query, candidate_keys)
+        # --- LangGraph Integration ---
+        try:
+            app = get_graph_app()
+            
+            initial_state = {
+                "query": query,
+                "comparison_type": comparison_type,
+                "candidate_keys": candidate_keys, # Pre-filtered by category if applicable
+                "candidate_columns": [], # Will be populated by graph if needed, or we can pass all
+                "llm": mapping_llm,
+                "keys": [],
+                "selected_columns": [],
+                "iteration_count": 0
+            }
+            
+            # Invoke the graph
+            # The graph will handle planning (keys) and column picking
+            # We need a thread_id for the checkpointer (MemorySaver)
+            if "thread_id" not in st.session_state:
+                import uuid
+                st.session_state.thread_id = str(uuid.uuid4())
+            
+            config = {"configurable": {"thread_id": st.session_state.thread_id}}
+            final_state = app.invoke(initial_state, config=config)
+            
+            planner_keys = final_state.get("selected_keys", [])
+            picked_columns = final_state.get("selected_columns", [])
+            
+            logger.info("Graph execution completed.")
+            logger.info("Graph selected keys: %s", planner_keys)
+            logger.info("Graph selected columns: %s", picked_columns)
+            
+        except Exception as e:
+            logger.error(f"LangGraph execution failed: {e}")
+            st.error(f"⚠️ Agent workflow encountered an error: {e}. Falling back to default selection.")
+            planner_keys = candidate_keys
+            picked_columns = [] # Will trigger default fallback below
+
+        # Fallback if graph returned nothing (or failed)
         if not planner_keys:
             planner_keys = candidate_keys
-        logger.info("Planner selected mapping keys: %s", planner_keys)
-
+        
         columns_by_key = get_columns_for_keys(planner_keys)
         candidate_columns = flatten_columns(columns_by_key)
 
-        picked_columns = agent_pick_relevant_columns(mapping_llm, query, planner_keys, candidate_columns)
         if not picked_columns:
-            picked_columns = candidate_columns
-        logger.info("Column agent selected columns: %s", picked_columns)
+             # If graph didn't pick columns (or fallback), we might want to run the manual picker OR just use all
+             # For now, let's trust the graph or fall back to all if it failed completely
+             picked_columns = candidate_columns
+
+        # Ensure picked_columns are actually in candidate_columns (sanity check)
+        picked_columns = [c for c in picked_columns if c in candidate_columns]
+        if not picked_columns:
+             picked_columns = candidate_columns
+             
+        logger.info("Final columns after graph/fallback: %s", picked_columns)
 
         filtered_columns_by_key = {}
         for key, cols in columns_by_key.items():

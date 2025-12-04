@@ -3,3 +3,6 @@ venv
 vector_cache
 /__pycache__
 Pune_Grand_Summary.pkl
+patch_state_key.py
+patch_thread_id.py
+test_graph.py

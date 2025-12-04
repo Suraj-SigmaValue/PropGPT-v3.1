@@ -213,15 +213,25 @@ def planner_identify_mapping_keys(llm, query: str, candidate_keys: List[str]) ->
                 if key in candidate_keys and key not in filtered:
                     filtered.append(key)
 
-            # Push sold/sales keys to the end for supply queries
-            demand_like = []
-            non_demand_like = []
-            for k in filtered:
-                if ("units sold" in k.lower()) or ("sold" in k.lower()) or ("total sales" in k.lower()):
-                    demand_like.append(k)
-                else:
-                    non_demand_like.append(k)
-            filtered = non_demand_like + demand_like
+            # CRITICAL FIX: For supply-only queries, REMOVE demand/sold keys
+            if metric_type == "supply":
+                # Remove any demand-related keys
+                filtered = [k for k in filtered if not (
+                    "units sold" in k.lower() or 
+                    "sold" in k.lower() or 
+                    "total sales" in k.lower() or
+                    "demand" in k.lower()
+                )]
+            else:
+                # For "both", push sold/sales keys to the end
+                demand_like = []
+                non_demand_like = []
+                for k in filtered:
+                    if ("units sold" in k.lower()) or ("sold" in k.lower()) or ("total sales" in k.lower()):
+                        demand_like.append(k)
+                    else:
+                        non_demand_like.append(k)
+                filtered = non_demand_like + demand_like
 
         # 4) DEMOGRAPHY / PINCODE ENFORCEMENT
         if is_demo:
@@ -286,14 +296,25 @@ def planner_identify_mapping_keys(llm, query: str, candidate_keys: List[str]) ->
                 if key in candidate_keys and key not in filtered:
                     filtered.append(key)
 
-            demand_like = []
-            non_demand_like = []
-            for k in filtered:
-                if ("units sold" in k.lower()) or ("sold" in k.lower()) or ("total sales" in k.lower()):
-                    demand_like.append(k)
-                else:
-                    non_demand_like.append(k)
-            filtered = non_demand_like + demand_like
+            # CRITICAL FIX: For supply-only queries, REMOVE demand/sold keys (fallback)
+            if metric_type_fallback == "supply":
+                # Remove any demand-related keys
+                filtered = [k for k in filtered if not (
+                    "units sold" in k.lower() or 
+                    "sold" in k.lower() or 
+                    "total sales" in k.lower() or
+                    "demand" in k.lower()
+                )]
+            else:
+                # For "both", push sold/sales keys to the end
+                demand_like = []
+                non_demand_like = []
+                for k in filtered:
+                    if ("units sold" in k.lower()) or ("sold" in k.lower()) or ("total sales" in k.lower()):
+                        demand_like.append(k)
+                    else:
+                        non_demand_like.append(k)
+                filtered = non_demand_like + demand_like
 
         if _is_demography_query(query):
             demo_key = "Top 10 Buyer Pincode units sold"
