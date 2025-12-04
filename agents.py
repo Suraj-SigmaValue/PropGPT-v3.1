@@ -108,52 +108,104 @@ def planner_identify_mapping_keys(llm, query: str, candidate_keys: List[str]) ->
         "real-estate analytics question. Return ONLY a JSON list of mapping keys from CANDIDATE_KEYS."
     )
     prompt = f"""
-    User Query: {query}
+User Query: {query}
 
-    CANDIDATE_KEYS:
-    {json.dumps(candidate_keys, indent=2)}
+CANDIDATE_KEYS:
+{json.dumps(candidate_keys, indent=2)}
 
-    Selection Rules (in priority order):
-    
-    CRITICAL - SOLD vs TOTAL UNITS DISTINCTION:
-    - "SOLD" / "DEMAND" queries → Use "Property type wise Units Sold" (contains sold data from IGR)
-    - "TOTAL UNITS" / "SUPPLY" queries → Use "Property Type wise total units" (contains total available units)
-    - Keywords for SOLD: "sold", "demand", "purchased", "bought", "transactions", "sales count"
-    - Keywords for TOTAL: "supply", "available", "total units", "inventory", "stock"
-    - DEFAULT: If query asks about flats/shops/offices WITHOUT specifying supply/total → Assume SOLD units
-    
-    1. SUPPLY & DEMAND QUERIES:
-       - If query mentions BOTH "supply" AND "demand": Include "Property type wise Units Sold" (demand) + "Property Type wise total units" (supply)
-       - If query mentions only "supply" or "total units" or "available": 
-         - No property type mentioned → Select "total units"
-         - Property type mentioned → Select "Property Type wise total units" 
-         - BHK type mentioned → Select "BHK wise total units"
-       - If query mentions only "demand" or "sold": Select "Property type wise Units Sold", "BHK types wise units sold"
-       - If query asks "how many flats/shops/offices" WITHOUT "supply"/"total" keywords → Select "Property type wise Units Sold"
-       - If query asks related to rate trend refer Property Type Wise Average Price per Sq. Ft. (Carpet Area Basis) mapping
-    
-    2. SPECIFIC METRICS:
-       - Sales value (INR) → "Total sales (INR)" and property/BHK-specific sales keys
-       - Project count → "Total Project Launched", "Total Phases Launched", "Total Buildings or Towers"
-       - Carpet area by pincode in >3BHK → "BHK type wise top buyers pincode wise Carpet area sold or consumed Percentage(%)"
-    
-    3. PROPERTY TYPE & BHK EXPANSION:
-       - If NO specific property type/BHK mentioned → Include property-type-wise keys
-       - If specific type mentioned → Include only that type's keys
-    
-    4. GENERAL SELECTION PRINCIPLES:
-       - Return the smallest set of keys that fully answers the query
-       - Match user's specificity level (don't add qualifiers not in query)
-       - Break multi-metric queries into components and cover ALL components
-    
-    EXAMPLES:
-    - "How many flats sold?" → ["Property type wise Units Sold"]
-    - "Total units available?" → ["total units"]
-    - "Supply of flats?" → ["Property Type wise total units"]
-    - "Supply of 2BHK units?" → ["BHK wise total units"]
-    - "Flats, shops, offices sold in each location?" → ["Property type wise Units Sold", "Location"]
-    
-    Output: JSON array of mapping keys only, no commentary.
+STEP 1: IDENTIFY QUERY TYPE
+First, determine what type of information the query is asking for:
+
+A. PROJECT METADATA/PROFILE - Questions about project details:
+   - Project name, location, city, developer/organization
+   - Commencement date, completion date, project type
+   - Number of phases, RERA registration details
+   → Select from: "Project Name", "Project Location", "Project City", "Type of Project", 
+     "Project commencement date", "Project Completion date", "Total Phases of Project", 
+     "Name of the organization/ Indvidual"
+
+B. INFRASTRUCTURE/CAPACITY - Questions about physical attributes:
+   - Number of buildings/towers
+   - Minimum/maximum floors
+   - Total units planned/capacity (note: this is SUPPLY, not sold)
+   → Select from: "No of Buildings or Towers in Project", "total floors"
+
+C. COMPOSITION/SHARE - Questions about percentage breakdown or mix:
+   - Property type composition/share/mix/distribution
+   - What percentage is residential/commercial/others
+   → Select: "broad property types Share (%)"
+
+D. DEMOGRAPHIC/BUYER PROFILE - Questions about buyer characteristics:
+   - Buyer pincodes, top pincodes
+   - Age ranges of buyers
+   - Buyer demographics
+   → Select from: "Top 10 Buyer Pincode units sold", "Property type wise Top 10 Buyer Pincode Percentage(%)", 
+     "BHK wise Top 10 Buyer Pincode Unit Sold Percentage(%)", age range keys
+
+E. SUPPLY (Available/Planned Units) - Questions about total units, available units, inventory:
+   - "Total units", "available units", "units planned", "supply", "inventory"
+   → Select from: "total units", "Property Type wise total units", "BHK wise total units"
+   → NEVER select "sold" or "adopted sold" keys for supply queries
+
+F. DEMAND/SOLD UNITS - Questions about units sold, transactions, sales count:
+   - "Units sold", "flats sold", "demand", "purchased", "transactions"
+   → Select from: "Property type wise Units Sold", "BHK types wise units sold", "Units sold"
+
+G. PRICING/RATES - Questions about prices, rates, cost:
+   - Average price, price per sq ft, rate trends
+   → Select from: "Property Type Wise Average Price per Sq. Ft. (Carpet Area Basis)", 
+     "Total sales (INR)" keys
+
+STEP 2: APPLY SELECTION RULES
+
+CRITICAL DISTINCTIONS:
+1. SUPPLY vs DEMAND:
+   - SUPPLY keywords: "total units", "available", "planned", "inventory", "supply", "capacity"
+     → Use "total units" or "Property Type wise total units"
+   - DEMAND keywords: "sold", "purchased", "transactions", "demand", "bought"
+     → Use "Property type wise Units Sold" or "BHK types wise units sold"
+   - DEFAULT: If query asks "how many flats/shops" WITHOUT context → Assume SOLD
+
+2. METADATA vs SALES DATA:
+   - If query asks about "project name", "location", "dates", "phases", "developer"
+     → This is METADATA, not sales data
+     → Select metadata keys, NOT unit sold keys
+
+3. INFRASTRUCTURE vs UNITS:
+   - "Buildings", "towers", "floors" → Infrastructure keys
+   - "Units planned/total" → Supply keys (total units)
+   - "Units sold" → Demand keys (sold units)
+
+STEP 3: EXAMPLES
+
+Metadata queries:
+- "Project name and location?" → ["Project Name", "Project Location"]
+- "Commencement and completion dates?" → ["Project commencement date", "Project Completion date"]
+- "Project profile with name, city, type, phases?" → ["Project Name", "Project City", "Type of Project", "Total Phases of Project"]
+
+Infrastructure queries:
+- "Number of buildings and floors?" → ["No of Buildings or Towers in Project", "total floors"]
+- "Basic capacity snapshot?" → ["No of Buildings or Towers in Project", "total floors"]
+
+Composition queries:
+- "Property type composition?" → ["broad property types Share (%)"]
+- "What percentage is residential vs commercial?" → ["broad property types Share (%)"]
+
+Demographic queries:
+- "Top 10 buyer pincodes?" → ["Top 10 Buyer Pincode units sold"]
+- "Demographic analysis?" → ["Top 10 Buyer Pincode units sold"]
+
+Supply queries:
+- "Total units available?" → ["total units"]
+- "Supply of flats?" → ["Property Type wise total units"]
+- "How many 2BHK units planned?" → ["BHK wise total units"]
+
+Demand queries:
+- "How many flats sold?" → ["Property type wise Units Sold"]
+- "Units sold by property type?" → ["Property type wise Units Sold"]
+- "2BHK transactions?" → ["BHK types wise units sold"]
+
+Output: JSON array of mapping keys only, no commentary.
     """
     try:
         raw_resp = llm.invoke(sys_instr + "\n\n" + prompt)
