@@ -7,7 +7,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.tools import tool
 from langchain_core.messages import BaseMessage
-from IPython.display import Image, display
+
 
 from agents import planner_identify_mapping_keys, agent_pick_relevant_columns
 from mapping import (
