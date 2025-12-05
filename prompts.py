@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 """
 Prompt templates for PropGPT real-estate analysis.
 Contains prompts for different comparison types:
