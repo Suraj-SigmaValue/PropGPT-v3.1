@@ -659,17 +659,29 @@ def clean_response(text: str) -> str:
     text = re.sub(r'^```markdown\s*\n', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\n```\s*$', '', text)
     
-    # Ensure newline before headers
-    text = re.sub(r'([^\n])(#{1,6}\s+)', r'\1\n\n\2', text)
+    # Fix the issue: Repair broken words before headers (your main problem)
+    # Look for words that end with a letter, have newline(s), then a header
+    text = re.sub(r'(\w+)\s*\n+\s*(#{1,6}\s+)', r'\1 \2', text)
     
-    # Ensure newline after headers
-    text = re.sub(r'(#{1,6}\s+[^\n]+)([^\n])', r'\1\n\2', text)
+    # Ensure proper spacing before headers WITHOUT breaking words
+    text = re.sub(r'([^\n])\s*(#{1,6}\s+)', r'\1\n\n\2', text)
     
-    # Ensure newlines before bullet points
-    text = re.sub(r'([^\n])([-*]\s+)', r'\1\n\2', text)
+    # Ensure proper spacing after headers
+    text = re.sub(r'(#{1,6}\s+.+?)\s*([^\n])', r'\1\n\2', text, flags=re.DOTALL)
+    
+    # Fix broken words before bullet points
+    text = re.sub(r'(\w+)\s*\n+\s*([-*]\s+)', r'\1 \2', text)
+    
+    # Ensure newlines before bullet points (but not breaking words)
+    text = re.sub(r'([^\n])\s*([-*]\s+)', r'\1\n\2', text)
     
     # Remove excessive blank lines
     text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Additional fix: Repair any remaining broken words across lines
+    # This handles cases like "Summar\ny" -> "Summary"
+    text = re.sub(r'(\w+)\\n(\w+)', r'\1\2', text)  # For escaped newlines
+    text = re.sub(r'(\w+)\n(\w+)', r'\1\2', text)   # For actual newlines between words
     
     return text.strip()
 
@@ -833,6 +845,10 @@ st.markdown("""
     h1, h2, h3, h4, h5, h6 {
         font-weight: 600;
         letter-spacing: -0.5px;
+        word-break: keep-all !important;
+        overflow-wrap: normal !important;
+        white-space: normal !important;
+        hyphens: none !important;
     }
     
     h1 {
@@ -840,6 +856,7 @@ st.markdown("""
         color: var(--text-primary);
         margin-bottom: 0.5rem;
         font-weight: 700;
+        word-spacing: normal !important;
     }
     
     h2 {
@@ -848,6 +865,7 @@ st.markdown("""
         margin-top: 1.5rem;
         margin-bottom: 1rem;
         font-weight: 600;
+        word-spacing: normal !important;
     }
     
     h3 {
@@ -856,6 +874,7 @@ st.markdown("""
         margin-top: 1.25rem;
         margin-bottom: 0.75rem;
         font-weight: 600;
+        word-spacing: normal !important;
     }
     
     h4 {
@@ -864,6 +883,7 @@ st.markdown("""
         margin-top: 1rem;
         margin-bottom: 0.5rem;
         font-weight: 600;
+        word-spacing: normal !important;
     }
     
     /* Paragraph and Text */

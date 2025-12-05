@@ -6,3 +6,7 @@ Pune_Grand_Summary.pkl
 patch_state_key.py
 patch_thread_id.py
 test_graph.py
+.gitignore
+CACHE_INTEGRATION_GUIDE.txt
+COMPLETE_SYSTEM_GUIDE.md
+~$Pune_Grand_Summary.xlsx
