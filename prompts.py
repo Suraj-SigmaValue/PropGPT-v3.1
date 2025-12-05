@@ -182,12 +182,12 @@ For each city, include:
 
 #### [City Name]
 #### Flats:
-- Average Price (2020): ₹X per sq. ft. → (2024): ₹Y per sq. ft. (Growth: Z%)
+- Average Price (2020): INR X per sq. ft. → (2024): INR Y per sq. ft. (Growth: Z%)
 - [Key insight about trend]
 - [Another metric or observation]
 
 #### Offices:
-- Average Price (2020): ₹X per sq. ft. → (2024): ₹Y per sq. ft. (Growth: Z%)
+- Average Price (2020): INR X per sq. ft. → (2024): INR Y per sq. ft. (Growth: Z%)
 - [Key insight about trend]
 """}
 
