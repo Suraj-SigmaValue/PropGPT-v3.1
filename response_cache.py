@@ -252,6 +252,27 @@ class SemanticResponseCache:
         self.cache = {}
         self._save_cache()
         logger.info("Cleared all cache entries")
+
+    def delete(
+        self,
+        query: str,
+        items: list,
+        mapping_keys: list,
+        comparison_type: str,
+        provider: str
+    ) -> bool:
+        """
+        Delete a specific cache entry.
+        Returns True if entry was found and deleted, False otherwise.
+        """
+        cache_key = self._build_cache_key(query, items, mapping_keys, comparison_type, provider)
+        if cache_key in self.cache:
+            del self.cache[cache_key]
+            self._save_cache()
+            logger.info(f"🗑️ Deleted cache entry for key: {cache_key[:12]}...")
+            return True
+        return False
+
     
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""

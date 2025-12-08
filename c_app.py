@@ -40,6 +40,8 @@ from agents import planner_identify_mapping_keys, agent_pick_relevant_columns
 from graph_agent import create_graph
 from prompts import build_location_prompt, build_city_prompt, build_project_prompt
 from response_cache import SemanticResponseCache
+import hitl_system
+from agents import agent_correction_mapping
 
 # Suppress warnings
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -1427,6 +1429,131 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# ---------------- HITL RETRY LOGIC ----------------
+if st.session_state.get("needs_retry", False):
+    st.markdown("### 🔄 HITL Correction in Progress...")
+    
+    ctx = st.session_state.get("last_run_context", {})
+    if ctx:
+        retry_query = ctx["query"]
+        retry_items = ctx["items"] 
+        retry_categories = ctx["categories"]
+        old_mapping_keys = ctx["old_mapping_keys"]
+        retry_comparison_type = ctx["df_info"]["comparison_type"]
+        
+        # 0. Invalidate Cache for the "Thumbs Down" response
+        # We need the provider that was used. Context doesn't store provider directly but we can verify against session state or just try both to be safe
+        # Or better, let's look at what we're using now (likely same provider configuration)
+        try:
+            # We reconstruct the provider display name from current selection as approximation
+            # If the user changed provider between runs, this edge case is acceptable (won't delete)
+            # Ideally we should have stored provider in context, but let's try with current settings
+            provider_to_delete = "OpenAI" if selected_response_llm_provider == "openai" else "Google Gemini"
+            
+            # We also need to re-initialize cache access here
+            embeddings = get_embeddings()
+            response_cache = get_response_cache(embeddings)
+            
+            # Attempt delete
+            start_count = len(response_cache.cache)
+            deleted = response_cache.delete(
+                query=retry_query.strip(),
+                items=retry_items,
+                mapping_keys=old_mapping_keys,
+                comparison_type=retry_comparison_type,
+                provider=provider_to_delete
+            )
+            if deleted:
+                st.toast("🗑️ Incorrect response removed from cache.")
+        except Exception as e:
+            logger.warning(f"Failed to delete cache entry: {e}")
+
+        # 1. Get New Mapping Keys via Correction Agent
+        try:
+            mapping_llm = get_llm("openai") # Default to OpenAI for reasoning
+            new_keys = agent_correction_mapping(
+                mapping_llm, 
+                retry_query, 
+                old_mapping_keys, 
+                # We need candidate keys. Re-fetch or approximate from old keys
+                # Ideally we re-fetch based on categories
+                old_mapping_keys + ["total units", "Units sold"] # Fallback candidates if full list missing
+            ) 
+            
+            # Re-fetch candidate keys properly to give agent real choices
+            # (We have to re-run category expansion logic briefly)
+            valid_candidates = []
+            for cat in retry_categories:
+                valid_candidates.extend(get_category_keys(cat.lower()))
+            if not valid_candidates:
+                 valid_candidates = list(COLUMN_MAPPING.keys())
+            
+            # Calling agent again with proper candidates
+            new_keys = agent_correction_mapping(mapping_llm, retry_query, old_mapping_keys, sorted(set(valid_candidates)))
+            
+            st.info(f"💡 Corrected Mapping Keys: {new_keys}")
+            
+            # 2. Re-Run Pipeline (Simplified duplication of main logic)
+            # Load Data
+            df_retry, defaults_retry, id_col_retry = load_and_clean_data(
+                excel_path, pickle_path, 
+                comparison_type=retry_comparison_type, 
+                items=retry_items,
+                years=None if str(retry_comparison_type).strip().lower() == "project" else [2020, 2021, 2022, 2023, 2024]
+            )
+            
+            # Select Columns (Reuse existing logic or fall back to all for these keys)
+            columns_by_key = get_columns_for_keys(new_keys)
+            # Flatten
+            retry_final_columns = flatten_columns(columns_by_key)
+            
+            # Create Docs
+            retry_documents = create_documents(df_retry, retry_items, defaults_retry, columns_by_key, comparison_type=retry_comparison_type, id_col=id_col_retry)
+            
+            # Retrieval
+            embeddings = get_embeddings()
+            retry_vs = build_vector_store(retry_documents, embeddings, "retry_cache_key")
+            retry_bm25 = build_bm25_retriever(retry_documents)
+            
+            retry_context_docs = hybrid_retrieve(retry_query, new_keys, retry_vs, retry_bm25)
+            retry_context_text = "\n\n".join(d.page_content for d in retry_context_docs)
+            
+            # Generate Prompt
+            # We need to pick the prompt function
+            if retry_comparison_type.lower() == "location": prompt_func = build_location_prompt
+            elif retry_comparison_type.lower() == "city": prompt_func = build_city_prompt
+            elif retry_comparison_type.lower() == "project": prompt_func = build_project_prompt
+            else: prompt_func = build_location_prompt
+            
+            retry_formatted_prompt = prompt_func(
+                question=retry_query,
+                items=retry_items,
+                mapping_keys=new_keys,
+                selected_columns=retry_final_columns,
+                context=retry_context_text,
+                category_summary=", ".join(retry_categories),
+                chat_history=st.session_state.messages
+            )
+            
+            # Invoke Response LLM
+            response_llm = get_llm("openai")
+            with st.spinner("Generating corrected response..."):
+                final_resp = response_llm.invoke(retry_formatted_prompt)
+                final_text = final_resp.content
+            
+            # Display
+            correction_msg = f"**[Result after Human Feedback Correction]**\n\n*New mapping keys used: {new_keys}*\n\n{final_text}"
+            st.session_state.messages.append({"role": "assistant", "content": correction_msg})
+            
+            # Reset
+            st.session_state.needs_retry = False
+            st.session_state.feedback_given = False # Reset for next turn
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Retry calculation failed: {e}")
+            st.session_state.needs_retry = False
+
 # Accept user input
 if query := st.chat_input("Ask a question about the selected items..."): 
     st.session_state.messages.append({"role": "user", "content": query})
@@ -1895,6 +2022,14 @@ if query := st.chat_input("Ask a question about the selected items..."):
                 st.markdown(f"<div style='background-color: #2a1a1a; border-left: 3px solid #e74c3c; padding: 1rem; border-radius: 4px;'><p style='color: #ec7063; margin: 0;'>Could not generate project recommendations: {e}</p></div>", unsafe_allow_html=True)
 
         if response_text:
+            # HITL UI Hook
+            hitl_system.show_feedback_ui(
+                query=query,
+                items=selected_items,
+                categories=categories,
+                mapping_keys=final_mapping_keys,
+                df_snapshot_info={"comparison_type": comparison_type}
+            )
             st.session_state.messages.append({"role": "assistant", "content": response_text})
 
         footer_html = '''

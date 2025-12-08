@@ -433,3 +433,88 @@ def agent_pick_relevant_columns(llm, query: str, selected_keys: List[str], candi
             if any(token in col.lower() for token in query_tokens)
         ]
         return heuristic or candidate_columns[: min(15, len(candidate_columns))]
+
+
+def agent_correction_mapping(llm, query: str, old_keys: List[str], candidate_keys: List[str]) -> List[str]:
+    """
+    Correction Agent: Proposes NEW mapping keys assuming the old ones were incorrect (Thumbs Down).
+    
+    Args:
+        llm: Language model instance
+        query: User's original query
+        old_keys: The keys used in the rejected response
+        candidate_keys: All available keys
+        
+    Returns:
+        New list of mapping keys
+    """
+    if not candidate_keys:
+        return []
+
+    sys_instr = (
+        "You are a correction assistant. The user provided negative feedback (Thumbs Down) for a previous answer. "
+        "The previous answer used a specific set of mapping keys which the user ostensibly found incorrect or insufficient. "
+        "Your task: Re-analyze the query and select BETTER mapping keys from CANDIDATE_KEYS. "
+        "Avoid simply repeating the exact same set if possible, unless you are strictly convinced they are the only correct ones "
+        "(in which case, maybe add a missing key). "
+        "Return ONLY a JSON list of mapping keys."
+    )
+    
+    prompt = f"""
+    ### SYSTEM ROLE: REINFORCEMENT LEARNING CORRECTION AGENT
+    You are an intelligent data mapping agent. You are currently in a "Correction Loop" because your previous action received a NEGATIVE REWARD (User Thumbs Down).
+
+    ### CURRENT STATE
+    1. **User Query:** "{query}"
+    2. **Rejected Policy (Previous Incorrect Keys):** {json.dumps(old_keys, indent=2)}
+
+    ### ACTION SPACE (Available Candidate Keys)
+    {json.dumps(candidate_keys, indent=2)}
+
+    ### OPTIMIZATION TASK
+    Your goal is to maximize the reward by finding the correct mapping that the user accepts.
+    You must apply "Reflexion" to diagnose the error and switch your strategy.
+
+    **Step 1: Diagnostic (Critique Phase)**
+    Analyze WHY the Rejected Keys resulted in a negative reward.
+    - Did you confuse Supply (Total Units) vs Demand (Sold)?
+    - Did you confuse Granularity (Daily vs Monthly)?
+    - Did you miss specific metadata filters (e.g., specific region or status)?
+    *Note: The user implies the previous mapping was logically inverted or irrelevant.*
+
+    **Step 2: Exploration (Correction Phase)**
+    Select a DIFFERENT set of keys from the Candidate List that satisfies the query. 
+    - CONSTRAINT: You MUST NOT output the exact same set of keys as the Rejected Policy.
+    - HEURISTIC: If the query implies "Anti-Gravity" or high-level abstraction, look for computed columns or parent categories.
+
+    ### OUTPUT FORMAT
+    Provide your response in this strict JSON format only, with no markdown code blocks:
+
+    {{
+    "reasoning_trace": "Brief explanation of why the old keys failed and why the new ones were chosen.",
+    "corrected_keys": ["key1", "key2"]
+    }}
+    """
+    
+    try:
+        resp = llm.invoke(sys_instr + "\n\n" + prompt)
+        raw = getattr(resp, "content", None) or str(resp)
+        s, e = raw.find("["), raw.rfind("]") + 1
+        if s == -1 or e <= 0:
+            # Fallback: Just return the old keys if parsing fails, or try heuristic
+            return old_keys
+        
+        parsed = json.loads(raw[s:e])
+        if not isinstance(parsed, list):
+            return old_keys
+            
+        filtered = [k for k in parsed if k in candidate_keys]
+        if not filtered:
+             # If agent went rogue and returned invalid keys, fallback to old keys or top candidates
+             return candidate_keys[:3]
+             
+        return filtered
+        
+    except Exception as e:
+        logger.warning(f"Correction agent failed: {e}")
+        return old_keys
