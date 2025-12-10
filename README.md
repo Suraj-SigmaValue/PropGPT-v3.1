@@ -1,66 +1,190 @@
-# PropGPT Sigmavalue
+# PropGPT - Django + React Migration
 
-**PropGPT Sigmavalue** is an AI-powered real estate analysis tool designed to provide intelligent insights into property data. It leverages Large Language Models (LLMs) to interpret user queries and generate detailed reports on locations, cities, and specific projects.
+This project has been migrated from Streamlit to a Django REST API backend with React + Tailwind frontend.
 
-## Features
+## Architecture
 
--   **Intelligent Query Processing**: Uses LLM-powered agents to understand natural language queries and select relevant data mapping keys and columns.
--   **Multi-Level Analysis**:
-    -   **Location-wise**: Analyze trends and data for specific locations (includes year-wise trends 2020-2024).
-    -   **City-wise**: Aggregate data at the city level.
-    -   **Project-wise**: Detailed analysis of specific real estate projects.
--   **Interactive UI**: Built with Streamlit for a responsive and user-friendly experience.
--   **Flexible LLM Support**: Supports OpenAI (default), Google Gemini, and NVIDIA NIM.
--   **Hybrid Retrieval**: Combines FAISS vector search and BM25 for accurate document retrieval.
+- **Backend**: Django REST Framework API (Python)
+- **Frontend**: React with Vite + Tailwind CSS (JavaScript)
+- **LLM Integration**: OpenAI GPT-4o-mini / Google Gemini
+- **Vector Store**: FAISS + BM25 hybrid retrieval
+- **Caching**: Semantic response caching
 
-## Installation
+## Prerequisites
 
-1.  Clone the repository.
-2.  Install the required dependencies:
+- Python 3.9+
+- Node.js 18+
+- npm or yarn
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+## Setup Instructions
 
-## Configuration
+### Backend Setup
 
-1.  Create a `.env` file in the root directory.
-2.  Add your API keys:
+1. Navigate to the backend directory:
+```bash
+cd backend
+```
 
-    ```env
-    # Required for default configuration
-    OPENAI_API_KEY=sk-...
+2. Create a virtual environment:
+```bash
+python -m venv venv
+```
 
-    # Optional: For Google Gemini
-    GOOGLE_API_KEY=...
+3. Activate the virtual environment:
+```bash
+# Windows
+venv\Scripts\activate
 
-    # Optional: For NVIDIA NIM
-    NVIDIA_API_KEY=nvapi-...
-    ```
+# Linux/Mac
+source venv/bin/activate
+```
 
-3.  (Optional) Set the LLM provider explicitly:
+4. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-    ```env
-    USE_LLM=openai  # Options: openai, gemini
-    ```
+5. Copy `.env.example` to `.env` and configure:
+```bash
+copy .env.example .env
+```
+
+Edit `.env` and add your API keys:
+```
+OPENAI_API_KEY=sk-your-key-here
+GOOGLE_API_KEY=your-google-key-here
+USE_LLM=openai
+DJANGO_SECRET_KEY=your-secret-key-here
+```
+
+6. Run migrations:
+```bash
+python manage.py migrate
+```
+
+7. Start the Django development server:
+```bash
+python manage.py runserver
+```
+
+The backend API will be available at `http://localhost:8000`
+
+### Frontend Setup
+
+1. Navigate to the frontend directory:
+```bash
+cd frontend
+```
+
+2. Install dependencies:
+```bash
+npm install
+```
+
+3. Copy `.env.example` to `.env`:
+```bash
+copy .env.example .env
+```
+
+The default configuration points to `http://localhost:8000/api`
+
+4. Start the development server:
+```bash
+npm run dev
+```
+
+The frontend will be available at `http://localhost:5173`
 
 ## Usage
 
-Run the Streamlit application:
+1. Ensure both backend and frontend servers are running
+2. Open `http://localhost:5173` in your browser
+3. Select a comparison type (Location, City, or Project)
+4. Choose items to compare (up to 5)
+5. Select analysis categories
+6. Ask questions about your selected items
+7. View AI-generated analysis with metrics
+8. Provide feedback using thumbs up/down buttons
 
-```bash
-streamlit run c_app.py
+## API Endpoints
+
+- `GET /api/health/` - Health check
+- `GET /api/comparison-items/` - Get available items for comparison type
+- `POST /api/query/` - Submit analysis query
+- `POST /api/feedback/` - Submit feedback (thumbs up/down)
+- `GET /api/cache/stats/` - Get cache statistics
+- `DELETE /api/cache/clear/` - Clear cache
+
+## Features
+
+- ✅ Multi-level analysis (Location, City, Project)
+- ✅ LLM-powered query intelligence (OpenAI/Gemini)
+- ✅ Hybrid retrieval (FAISS + BM25)
+- ✅ Semantic response caching
+- ✅ Human-in-the-loop feedback system
+- ✅ Real-time response streaming
+- ✅ Token usage tracking
+- ✅ Dark theme UI matching original design
+
+## Project Structure
+
+```
+PropGPT-v3.1/
+├── backend/
+│   ├── propgpt_api/          # Django project
+│   ├── api/                  # Main API app
+│   │   ├── services/         # Business logic
+│   │   ├── views.py          # API endpoints
+│   │   ├── serializers.py    # Request/response validation
+│   │   └── urls.py           # URL routing
+│   ├── agents.py             # LLM agents
+│   ├── config.py             # Configuration
+│   ├── mapping.py            # Data mappings
+│   ├── prompts.py            # LLM prompts
+│   └── requirements.txt      # Python dependencies
+├── frontend/
+│   ├── src/
+│   │   ├── services/         # API client
+│   │   ├── App.jsx           # Main component
+│   │   └── index.css         # Tailwind styles
+│   ├── package.json          # Node dependencies
+│   └── tailwind.config.js    # Tailwind configuration
+├── Pune_Grand_Summary.xlsx   # Data file
+└── README.md                 # This file
 ```
 
-## File Structure
+## Development
 
--   **`c_app.py`**: Main application file containing the Streamlit UI and orchestration logic.
--   **`agents.py`**: Contains the Planner and Column selection agents.
--   **`prompts.py`**: Stores prompt templates for different analysis types.
--   **`config.py`**: Configuration settings and constants.
--   **`mapping.py`**: Data mapping definitions.
--   **`ARCHITECTURE.md`**: Detailed architectural overview.
+### Backend Development
 
-## Data Sources
+- API views are in `backend/api/views.py`
+- Business logic is in `backend/api/services/`
+- Add new endpoints in `backend/api/urls.py`
 
-The application loads data from `Pune_Grand_Summary.xlsx` and caches it as `Pune_Grand_Summary.pkl` for performance.
+### Frontend Development
+
+- Main app logic is in `frontend/src/App.jsx`
+- API calls are in `frontend/src/services/api.js`
+- Styles are in `frontend/src/index.css`
+
+## Troubleshooting
+
+### Backend Issues
+
+- **Import errors**: Ensure virtual environment is activated
+- **Missing API keys**: Check `.env` file configuration
+- **Data file not found**: Ensure `Pune_Grand_Summary.xlsx` is in project root
+
+### Frontend Issues
+
+- **API connection errors**: Verify backend is running on port 8000
+- **CORS errors**: Check `CORS_ALLOWED_ORIGINS` in backend settings
+- **Build errors**: Clear node_modules and reinstall: `rm -rf node_modules && npm install`
+
+## License
+
+Proprietary - SigmaValue
+
+## Support
+
+For issues or questions, contact the development team.

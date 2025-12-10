@@ -486,6 +486,7 @@ def get_llm(provider_name=None):
 
     # Default to OpenAI
     api_key = (os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")).strip()
+    print("api_key...........................",api_key)
     if not api_key or not api_key.startswith("sk-"):
         raise RuntimeError("Missing/invalid OPENAI_API_KEY.")
     return ChatOpenAI(
