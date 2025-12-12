@@ -19,7 +19,6 @@ def get_embeddings():
     """Get HuggingFace embeddings model."""
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-mpnet-base-v2",
-        model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True}
     )
 
@@ -81,7 +80,8 @@ def hybrid_retrieve(query: str, mapping_keys: List[str], vector_store: FAISS, bm
         bm25_docs = []
         if bm25_retriever:
             try:
-                bm25_results = bm25_retriever.get_relevant_documents(query)
+                # CORRECTED: Use invoke() method instead of _get_relevant_documents()
+                bm25_results = bm25_retriever.invoke(query)
                 bm25_docs = [doc for doc in bm25_results if doc.metadata.get("mapping_key") == key][:top_k]
             except Exception as exc:
                 logger.warning(f"BM25 retrieval failed for key {key}: {exc}")

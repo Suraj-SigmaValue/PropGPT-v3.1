@@ -1315,7 +1315,7 @@ COLUMN_MAPPING_City = {
         "2.25bhk - age range wise unit sold",
         "2.75bhk - age range wise unit sold",
     ],
-    "(BHK type wise Age Range wise total sales (INR) Percentage(%)": [
+    "BHK type wise Age Range wise total sales (INR) Percentage(%)": [
         "1.5bhk - age range wise total sales",
         "1bhk - age range wise total sales",
         "2.5bhk - age range wise total sales",

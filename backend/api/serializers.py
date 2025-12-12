@@ -2,37 +2,51 @@
 API Serializers for PropGPT
 """
 from rest_framework import serializers
+from .constants import (
+    DEFAULT_COMPARISON_TYPES,
+    DEFAULT_LLM_PROVIDERS,
+    DEFAULT_CATEGORIES,
+    DEFAULT_LLM_PROVIDER,
+    DEFAULT_STREAM,
+    MAX_QUERY_LENGTH,
+    MAX_ITEM_NAME_LENGTH,
+    MAX_CATEGORY_NAME_LENGTH,
+    MIN_ITEMS_COUNT,
+    MAX_ITEMS_COUNT,
+    DEFAULT_FEEDBACK_TYPES,
+    DEFAULT_ITEM_LIMIT
+)
 
 
 class QueryRequestSerializer(serializers.Serializer):
     """Serializer for query requests."""
-    query = serializers.CharField(required=True, max_length=5000)
+    query = serializers.CharField(required=True, max_length=MAX_QUERY_LENGTH)
     comparison_type = serializers.ChoiceField(
-        choices=['Location', 'City', 'Project'],
+        choices=DEFAULT_COMPARISON_TYPES,
         required=True
     )
     items = serializers.ListField(
-        child=serializers.CharField(max_length=200),
+        child=serializers.CharField(max_length=MAX_ITEM_NAME_LENGTH),
         required=True,
-        min_length=1,
-        max_length=5
+        min_length=MIN_ITEMS_COUNT,
+        max_length=MAX_ITEMS_COUNT
     )
     categories = serializers.ListField(
-        child=serializers.CharField(max_length=100),
-        required=True,
-        min_length=1
+        child=serializers.CharField(max_length=MAX_CATEGORY_NAME_LENGTH),
+        required=False,
+        default=DEFAULT_CATEGORIES
     )
     mapping_llm_provider = serializers.ChoiceField(
-        choices=['openai', 'gemini'],
-        default='openai',
+        choices=DEFAULT_LLM_PROVIDERS,
+        default=DEFAULT_LLM_PROVIDER,
         required=False
     )
     response_llm_provider = serializers.ChoiceField(
-        choices=['openai', 'gemini'],
-        default='openai',
+        choices=DEFAULT_LLM_PROVIDERS,
+        default=DEFAULT_LLM_PROVIDER,
         required=False
     )
-    stream = serializers.BooleanField(default=True, required=False)
+    stream = serializers.BooleanField(default=DEFAULT_STREAM, required=False)
 
 
 class QueryResponseSerializer(serializers.Serializer):
@@ -54,11 +68,11 @@ class QueryResponseSerializer(serializers.Serializer):
 class ComparisonItemsRequestSerializer(serializers.Serializer):
     """Serializer for comparison items request."""
     comparison_type = serializers.ChoiceField(
-        choices=['Location', 'City', 'Project'],
+        choices=DEFAULT_COMPARISON_TYPES,
         required=True
     )
     search = serializers.CharField(required=False, allow_blank=True)
-    limit = serializers.IntegerField(required=False, default=100)
+    limit = serializers.IntegerField(required=False, default=DEFAULT_ITEM_LIMIT)
 
 
 class ComparisonItemsResponseSerializer(serializers.Serializer):
@@ -71,7 +85,7 @@ class ComparisonItemsResponseSerializer(serializers.Serializer):
 class FeedbackRequestSerializer(serializers.Serializer):
     """Serializer for feedback requests."""
     feedback_type = serializers.ChoiceField(
-        choices=['thumbs_up', 'thumbs_down'],
+        choices=DEFAULT_FEEDBACK_TYPES,
         required=True
     )
     query = serializers.CharField(required=True)

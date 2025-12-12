@@ -55,7 +55,23 @@ def get_category_keys(category: str) -> List[str]:
     """Return mapping keys associated with a category."""
     if CATEGORY_MAPPING is None:
         raise RuntimeError("CATEGORY_MAPPING not initialized. Call set_mappings_for_type first.")
-    return CATEGORY_MAPPING.get(category.lower(), [])
+    
+    # Normalize category names to match CATEGORY_MAPPING keys
+    # Frontend may send 'General' or 'general', backend uses 'all'
+    # Frontend may send 'Demographics' or 'demographics', backend uses 'demography'
+    category_normalization = {
+        'general': 'all',
+        'demographics': 'demography',
+        'demand': 'demand',
+        'supply': 'supply',
+        'price': 'price',
+        'unsold': 'unsold',
+        'all': 'all',  # Allow passthrough
+        'demography': 'demography'  # Allow passthrough
+    }
+    
+    normalized = category_normalization.get(category.lower(), category.lower())
+    return CATEGORY_MAPPING.get(normalized, [])
 
 
 def get_columns_for_keys(mapping_keys: List[str]) -> Dict[str, List[str]]:
@@ -218,7 +234,6 @@ def load_and_clean_data(
     """
     try:
         pickle_path = settings.PICKLE_FILE
-        
         if Path(pickle_path).exists():
             df = joblib.load(pickle_path)
             df.columns = [normalize_colname(str(c)) for c in df.columns]
@@ -226,7 +241,7 @@ def load_and_clean_data(
         else:
             logger.error(f"Pickle file not found at {pickle_path}")
             return None, None, None
-        
+
         # Filter by comparison type
         df = df[df["__type"] == comparison_type].drop(columns=["__type"])
         

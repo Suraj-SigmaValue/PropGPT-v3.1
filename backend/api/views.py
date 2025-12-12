@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 def health_check(request):
+    print("Health check endpoint.")
     """Health check endpoint."""
     excel_exists = Path(settings.EXCEL_FILE).exists()
     pickle_exists = Path(settings.PICKLE_FILE).exists()
@@ -181,36 +182,45 @@ def stream_query_generator(data):
         # Planning phase
         yield f"event: status\ndata: Planning analysis strategy...\n\n"
         
-        selected_categories = [cat.lower() for cat in categories]
-        candidate_keys = []
-        for category in selected_categories:
-            candidate_keys.extend(get_category_keys(category))
-        if not candidate_keys:
-            from config import get_column_mapping
-            col_map = get_column_mapping(comparison_type)
-            candidate_keys = list(col_map.keys())
-        candidate_keys = sorted(set(candidate_keys))
-        
-        try:
-            app = create_graph()
-            initial_state = {
-                "query": query,
-                "comparison_type": comparison_type,
-                "candidate_keys": candidate_keys,
-                "candidate_columns": [],
-                "llm": mapping_llm,
-                "keys": [],
-                "selected_columns": [],
-                "iteration_count": 0
-            }
-            import uuid
-            config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-            final_state = app.invoke(initial_state, config=config)
-            planner_keys = final_state.get("selected_keys", [])
-            picked_columns = final_state.get("selected_columns", [])
-        except Exception:
-            planner_keys = candidate_keys
-            picked_columns = []
+        forced_keys = data.get('forced_mapping_keys')
+        if forced_keys:
+             logger.info(f"Using forced mapping keys: {forced_keys}")
+             planner_keys = forced_keys
+             # We still need to pick columns for these keys
+             columns_by_key = get_columns_for_keys(planner_keys)
+             candidate_columns = flatten_columns(columns_by_key)
+             picked_columns = agent_pick_relevant_columns(mapping_llm, query, planner_keys, candidate_columns)
+        else:
+            selected_categories = [cat.lower() for cat in categories]
+            candidate_keys = []
+            for category in selected_categories:
+                candidate_keys.extend(get_category_keys(category))
+            if not candidate_keys:
+                from config import get_column_mapping
+                col_map = get_column_mapping(comparison_type)
+                candidate_keys = list(col_map.keys())
+            candidate_keys = sorted(set(candidate_keys))
+            
+            try:
+                app = create_graph()
+                initial_state = {
+                    "query": query,
+                    "comparison_type": comparison_type,
+                    "candidate_keys": candidate_keys,
+                    "candidate_columns": [],
+                    "llm": mapping_llm,
+                    "keys": [],
+                    "selected_columns": [],
+                    "iteration_count": 0
+                }
+                import uuid
+                config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+                final_state = app.invoke(initial_state, config=config)
+                planner_keys = final_state.get("selected_keys", [])
+                picked_columns = final_state.get("selected_columns", [])
+            except Exception:
+                planner_keys = candidate_keys
+                picked_columns = []
             
         if not planner_keys: planner_keys = candidate_keys
         columns_by_key = get_columns_for_keys(planner_keys)
@@ -230,7 +240,15 @@ def stream_query_generator(data):
         
         yield f"event: status\ndata: Building knowledge context...\n\n"
         
-        documents = create_documents(df, items, defaults, filtered_columns_by_key, comparison_type, id_col)
+        documents = create_documents(
+            df=df,
+            item_ids=items,
+            defaults=defaults,
+            columns_by_key=filtered_columns_by_key,
+            years=req_years,
+            comparison_type=comparison_type,
+            id_col=id_col
+        )
         cache_key = build_cache_key(items, final_mapping_keys, final_columns)
         vector_store = build_vector_store(documents, embeddings, cache_key)
         bm25_retriever = build_bm25_retriever(documents)
@@ -388,11 +406,29 @@ def submit_feedback(request):
                 old_mapping_keys,
                 sorted(set(valid_candidates))
             )
+
+            # Regenerate response with new keys
+            query_data = {
+                'query': query,
+                'comparison_type': comparison_type,
+                'items': items,
+                'categories': categories,
+                'mapping_llm_provider': provider,
+                'response_llm_provider': provider,
+                'forced_mapping_keys': new_keys,
+                'stream': False
+            }
+            
+            # Use process_query_logic to get the new response
+            # Note: This might take a few seconds
+            correction_result = process_query_logic(query_data)
+            corrected_text = correction_result.get('response', '')
             
             response_data = {
                 'status': 'success',
-                'message': 'Negative feedback received. Cache cleared and new mapping keys generated.',
-                'new_mapping_keys': new_keys
+                'message': 'Negative feedback received. Cache cleared and new response generated.',
+                'new_mapping_keys': new_keys,
+                'corrected_response': corrected_text
             }
         else:
             # Thumbs up - just acknowledge
