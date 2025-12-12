@@ -15,16 +15,59 @@ const api = axios.create({
 /**
  * Get available items for a comparison type
  */
+// export const getComparisonItems = async (comparisonType, search = '', limit = 100) => {
+//     const response = await api.get('/comparison-items/', {
+//         params: {
+//             comparison_type: comparisonType,
+//             search: search,
+//             limit: limit
+//         }
+     
+//     });
+//     return response.data;
+// };
+
 export const getComparisonItems = async (comparisonType, search = '', limit = 100) => {
-    const response = await api.get('/comparison-items/', {
-        params: {
-            comparison_type: comparisonType,
-            search: search,
-            limit: limit
-        }
+  try {
+    console.log("Calling getComparisonItems with:", {
+      comparisonType,
+      search,
+      limit,
     });
+
+    const response = await api.get("/comparison-items/", {
+      params: {
+        comparison_type: comparisonType,
+        search: search,
+        limit: limit,
+      },
+    });
+
+    console.log("Response from /comparison-items/:", response.data);
     return response.data;
+
+  } catch (error) {
+    console.error("Error in getComparisonItems:", error);
+    throw error;
+  }
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /**
  * Submit a query for processing

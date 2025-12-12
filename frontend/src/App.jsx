@@ -30,6 +30,109 @@ function App() {
     { value: 'Pricing', label: 'Pricing' },
     { value: 'Demographics', label: 'Demographics' }
   ];
+  //   const getLatestMetadata = () => {
+  //   for (let i = messages.length - 1; i >= 0; i--) {
+  //     const m = messages[i];
+  //     if (m?.role === "assistant" && m?.metadata) return m.metadata;
+  //   }
+  //   return null;
+  // };
+
+
+  // const latestMeta = getLatestMetadata();
+  // const dataSource = latestMeta?.data_source;
+  // const retrievedSources = latestMeta?.retrieved_sources || [];
+  const normalizeContentToRows = (content, fallbackMappingKey = "") => {
+    if (!content || typeof content !== "string") return [];
+
+    // Split into blocks by newline. Each line often contains one "series".
+    const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+
+    const rows = [];
+
+    for (const line of lines) {
+      // Example formats:
+      // 1) pune_..._1.5bhk age range wise unit sold: 2020:{...}, 2021:{...}
+      // 2) pune_BHK type wise total units_1bhk total: 2020:23781.0, 2021:18690.0, ...
+
+      const [left, rightRaw] = line.split(":").length >= 2
+        ? [line.slice(0, line.indexOf(":")).trim(), line.slice(line.indexOf(":") + 1).trim()]
+        : [line.trim(), ""];
+
+      // left might be: pune_<mapping_key>_<colname>
+      const leftParts = left.split("_");
+      const item = leftParts[0] || "";
+      const mappingKey = leftParts.length >= 3 ? leftParts.slice(1, -1).join("_") : fallbackMappingKey;
+      const column = leftParts.length >= 2 ? leftParts[leftParts.length - 1] : left;
+
+      const right = rightRaw;
+
+      // Case A: year:{dict} repeated
+      // Find patterns like 2020:{...}
+      const dictYearMatches = [...right.matchAll(/(\d{4})\s*:\s*\{([^}]*)\}/g)];
+      if (dictYearMatches.length > 0) {
+        for (const m of dictYearMatches) {
+          const year = m[1];
+          const dictBody = m[2]; // " '25 - 30': 20.11, '30 - 35': 25.81 ..."
+          // Keep as text (or you can parse further)
+          rows.push({
+            item,
+            mapping_key: mappingKey,
+            column,
+            year,
+            value: `{${dictBody}}`
+          });
+        }
+        continue;
+      }
+
+      // Case B: year:value list like 2020:23781.0, 2021:18690.0
+      const pairMatches = [...right.matchAll(/(\d{4})\s*:\s*([^,]+)(?:,|$)/g)];
+      if (pairMatches.length > 0) {
+        for (const m of pairMatches) {
+          const year = m[1];
+          const value = (m[2] || "").trim();
+          rows.push({
+            item,
+            mapping_key: mappingKey,
+            column,
+            year,
+            value
+          });
+        }
+        continue;
+      }
+
+      // Fallback: store raw
+      rows.push({
+        item,
+        mapping_key: mappingKey,
+        column,
+        year: "",
+        value: right || ""
+      });
+    }
+
+    return rows;
+  };
+
+  const getLatestMetadata = () => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m?.role === "assistant" && m?.metadata) return m.metadata;
+    }
+    return null;
+  };
+
+  const latestMeta = getLatestMetadata();
+  const mappingKeys = latestMeta?.mapping_keys || [];
+  const selectedColumns = latestMeta?.selected_columns || [];
+  const retrievedSources = latestMeta?.retrieved_sources || [];
+
+  const parsedRows = retrievedSources.flatMap((s) =>
+    normalizeContentToRows(s?.content || "", "")
+  );
+
 
   const loadOptions = async (inputValue) => {
     try {
@@ -37,12 +140,14 @@ function App() {
       return data.items.map(item => ({
         value: item,
         label: item.charAt(0).toUpperCase() + item.slice(1)
+
       }));
     } catch (error) {
       console.error('Error loading items:', error);
       return [];
     }
   };
+
 
   useEffect(() => {
     setSelectedItems([]);
@@ -140,6 +245,7 @@ function App() {
 
   const handleFeedback = async (feedbackType) => {
     if (!lastResponse) return;
+    console.log('Submitting feedback:', feedbackType, lastResponse);
     try {
       await submitFeedback({
         feedback_type: feedbackType,
@@ -285,6 +391,92 @@ function App() {
                 </div>
               </div>
             </div>
+
+
+            <div className="pt-6 border-t border-accent/20">
+              <h3 className="text-xs font-bold text-accent uppercase tracking-[0.2em] mb-4">SOURCE</h3>
+
+              <div className="bg-primary/50 border border-accent/20 p-4 space-y-3 font-mono text-[10px]">
+                {!latestMeta ? (
+                  <div className="text-white/60">NO SOURCE AVAILABLE YET</div>
+                ) : (
+                  <div className="space-y-4">
+
+                    {/* 1) Mapping Keys */}
+                    <div className="border border-accent/20 bg-primary/40 p-3">
+                      <div className="text-accent uppercase tracking-widest text-[10px] mb-2">
+                        MAPPING KEYS ({mappingKeys.length})
+                      </div>
+                      <div className="space-y-1">
+                        {mappingKeys.map((k, idx) => (
+                          <div key={idx} className="text-white/70 break-words">
+                            {idx + 1}. {k}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 2) Selected Columns */}
+                    <div className="border border-accent/20 bg-primary/40 p-3">
+                      <div className="text-accent uppercase tracking-widest text-[10px] mb-2">
+                        SELECTED COLUMNS ({selectedColumns.length})
+                      </div>
+                      <div className="max-h-40 overflow-auto custom-scrollbar space-y-1">
+                        {selectedColumns.map((c, idx) => (
+                          <div key={idx} className="text-white/70 break-words">
+                            {idx + 1}. {c}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 3) Parsed Retrieved Content (DataFrame-like) */}
+                    <div className="border border-accent/20 bg-primary/40 p-3">
+                      <div className="text-accent uppercase tracking-widest text-[10px] mb-2">
+                        RETRIEVED CONTENT (PARSED) ({parsedRows.length} rows)
+                      </div>
+
+                      {parsedRows.length === 0 ? (
+                        <div className="text-white/60">NO PARSED ROWS</div>
+                      ) : (
+                        <div className="max-h-64 overflow-auto custom-scrollbar">
+                          <table className="w-full text-[10px]">
+                            <thead className="sticky top-0 bg-primary">
+                              <tr className="text-white/60">
+                                <th className="text-left py-1 pr-2">ITEM</th>
+                                <th className="text-left py-1 pr-2">MAPPING_KEY</th>
+                                <th className="text-left py-1 pr-2">COLUMN</th>
+                                <th className="text-left py-1 pr-2">YEAR</th>
+                                <th className="text-left py-1 pr-2">VALUE</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {parsedRows.slice(0, 200).map((r, idx) => (
+                                <tr key={idx} className="border-t border-accent/10 text-white/70 align-top">
+                                  <td className="py-1 pr-2 break-words">{r.item}</td>
+                                  <td className="py-1 pr-2 break-words">{r.mapping_key}</td>
+                                  <td className="py-1 pr-2 break-words">{r.column}</td>
+                                  <td className="py-1 pr-2">{r.year}</td>
+                                  <td className="py-1 pr-2 break-words whitespace-pre-wrap">{r.value}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+
+                          {parsedRows.length > 200 && (
+                            <div className="mt-2 text-white/50">
+                              Showing first 200 rows only.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                )}
+
+              </div>
+            </div>
           </div>
         </div>
 
@@ -309,8 +501,8 @@ function App() {
 
                   <div className={`flex items-center gap-2 mb-2 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                     <div className={`w-6 h-6 flex items-center justify-center text-[10px] font-bold border rounded-sm font-mono ${message.role === 'user'
-                        ? 'bg-transparent border-white text-white'
-                        : 'bg-accent border-accent text-primary'
+                      ? 'bg-transparent border-white text-white'
+                      : 'bg-accent border-accent text-primary'
                       }`}>
                       {message.role === 'user' ? 'USR' : 'SYS'}
                     </div>

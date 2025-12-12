@@ -63,6 +63,7 @@ class QueryResponseSerializer(serializers.Serializer):
     response_model = serializers.CharField()
     cache_hit = serializers.BooleanField()
     retrieved_sources = serializers.ListField(required=False)
+    data_source = serializers.DictField(required=False)
 
 
 class ComparisonItemsRequestSerializer(serializers.Serializer):

@@ -107,6 +107,7 @@ def get_items(request):
 
 @api_view(['POST'])
 def process_query(request):
+    
     """Main query processing endpoint with streaming support."""
     serializer = QueryRequestSerializer(data=request.data)
     if not serializer.is_valid():
@@ -315,6 +316,10 @@ def stream_query_generator(data):
             )
             cache_hit = False
             
+        # Get sheet configuration for data source info
+        from config import SHEET_CONFIG
+        sheet_info = SHEET_CONFIG.get(comparison_type, {})
+        
         # Send final metadata
         metadata = {
             'mapping_keys': final_mapping_keys,
@@ -327,7 +332,14 @@ def stream_query_generator(data):
             'mapping_model': mapping_model,
             'response_model': response_model,
             'cache_hit': cache_hit,
-            'retrieved_sources': [{'content': doc.page_content[:600]} for doc in query_context_docs]
+            'retrieved_sources': [{'content': doc.page_content[:600]} for doc in query_context_docs],
+            'data_source': {
+                'excel_file': 'Pune_Grand_Summary.xlsx',
+                'sheet_name': sheet_info.get('sheet', 'Unknown'),
+                'comparison_type': comparison_type,
+                'items': items,
+                'item_count': len(items)
+            }
         }
         
         yield f"event: metadata\ndata: {json.dumps(metadata)}\n\n"
